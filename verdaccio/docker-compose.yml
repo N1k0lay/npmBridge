@@ -1,0 +1,15 @@
+services:
+  verdaccio:
+    image: verdaccio/verdaccio:latest
+    container_name: verdaccio-docker-latest
+    env_file:
+      - .env
+    ports:
+      - "${VERDACCIO_PORT:-4873}:4873"
+    volumes:
+      - "${STORAGE_DIR:-./storage}:/verdaccio/storage"
+      - "${VERDACCIO_CONF:-./conf}:/verdaccio/conf"
+    restart: always
+volumes:
+  verdaccio:
+    driver: local

@@ -1,0 +1,79 @@
+# Node / JS
+node_modules/
+.pnpm-store/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.env.local
+.env.*.local
+.env
+
+# Next.js build output
+.next/
+.output/
+out/
+dist/
+build/
+.next/cache/
+
+# TypeScript
+*.tsbuildinfo
+
+# Logs
+logs/
+*.log
+webapp/logs/
+
+# Runtime data
+webapp/data/
+default_data.json
+history.json
+
+# Verdaccio storage and archives
+verdaccio/storage/
+verdaccio/frozen/
+verdaccio/frozen/*
+# sometimes frozen stored in repository while building - ignore runtime copies
+diff_archives/
+
+# Docker
+.docker/
+docker-compose.override.yml
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+build/
+dist/
+*.egg-info/
+pip-wheel-metadata/
+
+# Editor/IDE
+.vscode/
+.idea/
+*.sublime*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Coverage
+coverage/
+.nyc_output/
+
+# Misc
+*.log
+*.tmp
+*.pid
+
+# Secrets / credentials (optional - uncomment if you want to ignore)
+# verdaccio/conf/htpasswd
+# .aws/credentials
+# .gcloud

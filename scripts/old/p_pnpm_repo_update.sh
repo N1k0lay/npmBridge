@@ -2,8 +2,9 @@
 
 unset HTTPS_PROXY HTTP_PROXY http_proxy https_proxy
 
-#директория с пакетами и временная установочная
-VERDACCIO_HOME="/home/npm/verdaccio"
+#директория с пакетами и временная установочная (может быть переопределено переменной окружения)
+VERDACCIO_HOME="${VERDACCIO_HOME:-/home/npm/verdaccio}"
+PNPM_CMD="${PNPM_CMD:-pnpm}"
 NPM_INSTALL_DIR="$VERDACCIO_HOME/shit"
 
 #переходим в директорию с пакетами
@@ -38,8 +39,8 @@ function cleanVerdaccioInstallDir ()
 cdVerdaccioHome
 
 #получаем список пактов @ и обычных
-NPM_GROUP_PKG_LIST=$(find . -type f -mmin -2880 -name 'package.json' | grep storage | sed {s/"..storage\/"//} | sed {s/".package.json"//} | grep "^@.*[!/]")
-NPM_PKG_LIST=$(find . -type f -mmin -2880 -name 'package.json' | grep storage | sed {s/"..storage\/"//} | sed {s/".package.json"//} | grep -v "^@")
+NPM_GROUP_PKG_LIST=$(ls -R storage/* | grep storage | tr -d ":" | sed {s/"storage\/"//} | grep "^@.*[!/]")
+NPM_PKG_LIST=$(ls -R storage/* | grep storage | tr -d ":" | sed {s/"storage\/"//} | grep -v "^@")
 
 #объединяем списки пакетов
 ALL_PKG_LIST="$NPM_GROUP_PKG_LIST $NPM_PKG_LIST"
@@ -54,7 +55,7 @@ function installPackage ()
   cd $temp_dir
 
   echo -e "\033[32mINSTALL\033[00m: $package"
-  pnpm install $package@latest --force
+  $PNPM_CMD install $package@latest --force
 
   #удаляем временную директорию
   cd $VERDACCIO_HOME

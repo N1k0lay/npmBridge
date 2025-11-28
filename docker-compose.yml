@@ -1,13 +1,66 @@
+version: '3.8'
+
 services:
+  # ===========================================
+  # Verdaccio - NPM Registry Proxy/Cache
+  # ===========================================
   verdaccio:
     image: verdaccio/verdaccio:latest
-    container_name: verdaccio-docker-latest
+    container_name: npm-hub-verdaccio
     ports:
-      - '4873:4873'
+      - "${VERDACCIO_PORT:-4873}:4873"
     volumes:
-      - './storage:/verdaccio/storage'
-      - './conf:/verdaccio/conf'
-    restart: always
+      - ${STORAGE_DIR:-./storage}:/verdaccio/storage
+      - ${VERDACCIO_CONF:-./verdaccio/conf}:/verdaccio/conf
+    environment:
+      - VERDACCIO_PORT=4873
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:4873/-/ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ===========================================
+  # npm hub - Web UI для управления
+  # ===========================================
+  webapp:
+    build:
+      context: ./webapp
+      dockerfile: Dockerfile
+    container_name: npm-hub-webapp
+    ports:
+      - "${WEBAPP_PORT:-4013}:3000"
+    volumes:
+      # Монтируем storage для чтения/записи
+      - ${STORAGE_DIR:-./storage}:/app/storage:ro
+      - ${FROZEN_DIR:-./frozen}:/app/frozen
+      - ${DIFF_ARCHIVES_DIR:-./diff_archives}:/app/diff_archives
+      - ${SCRIPTS_DIR:-./scripts}:/app/scripts:ro
+      - ./webapp/data:/app/data
+      - ./webapp/logs:/app/logs
+    environment:
+      - NODE_ENV=production
+      - VERDACCIO_HOME=/app
+      - STORAGE_DIR=/app/storage
+      - FROZEN_DIR=/app/frozen
+      - DIFF_ARCHIVES_DIR=/app/diff_archives
+      - SCRIPTS_DIR=/app/scripts
+      - DATA_DIR=/app/data
+      - LOGS_DIR=/app/logs
+      - PNPM_CMD=pnpm
+      - PARALLEL_JOBS=${PARALLEL_JOBS:-40}
+      - MODIFIED_MINUTES=${MODIFIED_MINUTES:-2880}
+    depends_on:
+      verdaccio:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
-  verdaccio:
-    driver: local
+  storage:
+  frozen:
+  diff_archives:
+
+networks:
+  default:
+    name: npm-hub-network
