@@ -22,13 +22,13 @@ services:
       retries: 3
 
   # ===========================================
-  # npm hub - Web UI для управления
+  # npmBridge - Web UI для управления
   # ===========================================
   webapp:
     build:
       context: ./webapp
       dockerfile: Dockerfile
-    container_name: npm-hub-webapp
+    container_name: npmBridge-webapp
     ports:
       - "${WEBAPP_PORT:-4013}:3000"
     volumes:

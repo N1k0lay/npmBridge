@@ -2,7 +2,7 @@ import type { Metadata } from 'next'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'npm hub',
+  title: 'npmBridge',
   description: 'Управление NPM репозиторием',
 }
 

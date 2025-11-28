@@ -45,7 +45,7 @@ export default function HomePage() {
           <div className="flex items-center justify-between">
             <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-3">
               <Package className="w-8 h-8 text-green-600" />
-              npm hub
+              npmBridge
             </h1>
             <div className="text-sm text-gray-500">
               Управление NPM репозиторием
@@ -120,7 +120,7 @@ export default function HomePage() {
       {/* Footer - sticky к низу */}
       <footer className="bg-white border-t mt-auto">
         <div className="max-w-7xl mx-auto px-4 py-4 text-center text-sm text-gray-500">
-          npm hub
+          npmBridge
         </div>
       </footer>
     </div>
