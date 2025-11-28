@@ -27,8 +27,11 @@ webapp/logs/
 
 # Runtime data
 webapp/data/
-default_data.json
-history.json
+webapp/logs/
+*.db
+*.db-wal
+*.db-shm
+npm-hub.db*
 
 # Verdaccio storage and archives
 verdaccio/storage/
@@ -77,3 +80,8 @@ coverage/
 # verdaccio/conf/htpasswd
 # .aws/credentials
 # .gcloud
+
+
+storage
+frozen
+diff_archives

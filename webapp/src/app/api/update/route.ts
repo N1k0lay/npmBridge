@@ -40,8 +40,11 @@ export async function GET(request: Request) {
     getRunningUpdate(),
   ]);
   
+  // В историю попадают только завершённые обновления
+  const completedUpdates = updates.filter(u => u.status !== 'running');
+  
   return NextResponse.json({
-    updates: updates.slice(0, 50), // Последние 50
+    updates: completedUpdates.slice(0, 50), // Последние 50 завершённых
     runningUpdate,
     config: {
       parallelJobs: config.parallelJobs,

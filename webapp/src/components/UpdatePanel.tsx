@@ -1,9 +1,15 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Play, Square, RefreshCw, Clock, Settings } from 'lucide-react';
 import { useTaskPolling } from '@/hooks/useTaskPolling';
 import { ProgressBar } from './ProgressBar';
+
+interface RunningUpdate {
+  id: string;
+  type: 'full' | 'recent';
+  startedAt: string;
+}
 
 interface UpdatePanelProps {
   onUpdate?: () => void;
@@ -16,10 +22,27 @@ export function UpdatePanel({ onUpdate }: UpdatePanelProps) {
   const [modifiedHours, setModifiedHours] = useState(48);
   const [showSettings, setShowSettings] = useState(false);
 
+  // Проверяем наличие уже запущенного обновления при загрузке
+  useEffect(() => {
+    const checkRunning = async () => {
+      try {
+        const res = await fetch('/api/update');
+        const data = await res.json();
+        if (data.runningUpdate) {
+          setTaskId(data.runningUpdate.id);
+        }
+      } catch (error) {
+        console.error('Error checking running update:', error);
+      }
+    };
+    checkRunning();
+  }, []);
+
   const { progress, status, isRunning } = useTaskPolling({
     taskId,
     endpoint: '/api/update',
     onComplete: () => {
+      setTaskId(null);
       onUpdate?.();
     },
   });

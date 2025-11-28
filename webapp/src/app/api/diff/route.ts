@@ -213,20 +213,23 @@ export async function PATCH(request: Request) {
       );
     }
     
-    // Синхронизируем frozen для этой сети
-    const taskId = `sync_${Date.now()}`;
-    const frozenDir = getNetworkFrozenDir(networkId);
-    const result = await runScript('sync_frozen.py', taskId, {
-      DIFF_ID: diffId,
-      FROZEN_DIR: frozenDir,
-      NETWORK_ID: networkId,
-    });
-    
-    if (!result.success) {
-      return NextResponse.json(
-        { error: 'Ошибка синхронизации frozen', details: result.error },
-        { status: 500 }
-      );
+    // Синхронизируем frozen только при ПЕРВОМ подтверждении (когда diff ещё pending)
+    // Это нужно чтобы следующий diff корректно сравнивал storage с frozen
+    // Если diff уже partial - frozen уже синхронизирован при первом подтверждении
+    if (diff.status === 'pending') {
+      const taskId = `sync_${Date.now()}`;
+      const frozenDir = getNetworkFrozenDir(networkId);
+      const result = await runScript('sync_frozen.py', taskId, {
+        DIFF_ID: diffId,
+        FROZEN_DIR: frozenDir,
+      });
+      
+      if (!result.success) {
+        return NextResponse.json(
+          { error: 'Ошибка синхронизации frozen', details: result.error },
+          { status: 500 }
+        );
+      }
     }
     
     // Помечаем diff как перенесённый в сеть
