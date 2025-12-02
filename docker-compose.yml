@@ -33,12 +33,12 @@ services:
       - "${WEBAPP_PORT:-4013}:3000"
     volumes:
       # Монтируем storage для чтения/записи
-      - ${STORAGE_DIR:-./storage}:/app/storage:ro
-      - ${FROZEN_DIR:-./frozen}:/app/frozen
-      - ${DIFF_ARCHIVES_DIR:-./diff_archives}:/app/diff_archives
+      - ${STORAGE_DIR:-/mnt/repo/npmBridge/storage}:/app/storage:ro
+      - ${FROZEN_DIR:-/mnt/repo/npmBridge/frozen}:/app/frozen
+      - ${DIFF_ARCHIVES_DIR:-/mnt/repo/npmBridge/diff_archives}:/app/diff_archives
       - ${SCRIPTS_DIR:-./scripts}:/app/scripts:ro
-      - ./webapp/data:/app/data
-      - ./webapp/logs:/app/logs
+      - /mnt/repo/npmBridge/data:/app/data
+      - /mnt/repo/npmBridge/logs:/app/logs
     environment:
       - NODE_ENV=production
       - VERDACCIO_HOME=/app
