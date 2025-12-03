@@ -1,6 +1,5 @@
 import { getDb } from './db';
 import { config } from './scripts';
-import path from 'path';
 import fs from 'fs';
 
 /**

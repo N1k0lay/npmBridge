@@ -1,15 +1,14 @@
 import { NextResponse } from 'next/server';
-import { existsSync, createReadStream } from 'fs';
+import { existsSync } from 'fs';
 import fs from 'fs/promises';
 import path from 'path';
 import { getDiff } from '@/lib/history';
-import { config } from '@/lib/scripts';
 
 export async function GET(
-  request: Request,
-  { params }: { params: { id: string } }
+  _request: Request,
+  { params }: { params: Promise<{ id: string }> }
 ) {
-  const diffId = params.id;
+  const { id: diffId } = await params;
   
   // Получаем информацию о diff
   const diff = await getDiff(diffId);

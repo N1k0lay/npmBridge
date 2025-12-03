@@ -3,8 +3,22 @@ import path from 'path';
 import fs from 'fs/promises';
 import { getDb } from './db';
 
+// Интерфейс конфигурации
+export interface AppConfig {
+  readonly verdaccioHome: string;
+  readonly storageDir: string;
+  readonly frozenDir: string;
+  readonly diffArchivesDir: string;
+  readonly scriptsDir: string;
+  readonly dataDir: string;
+  readonly logsDir: string;
+  readonly pnpmCmd: string;
+  parallelJobs: number;
+  modifiedMinutes: number;
+}
+
 // Конфигурация из переменных окружения
-export const config = {
+export const config: AppConfig = {
   verdaccioHome: process.env.VERDACCIO_HOME || '/home/npm/verdaccio',
   storageDir: process.env.STORAGE_DIR || '/home/npm/verdaccio/storage',
   frozenDir: process.env.FROZEN_DIR || '/home/npm/verdaccio/frozen',

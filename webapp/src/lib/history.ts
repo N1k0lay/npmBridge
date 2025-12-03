@@ -1,6 +1,4 @@
 import { getDb } from './db';
-import { config } from './scripts';
-import { getNetworkDiffArchivesDir } from './networks';
 import fs from 'fs';
 
 /**

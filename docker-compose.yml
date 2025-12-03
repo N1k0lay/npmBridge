@@ -2,13 +2,29 @@ version: '3.8'
 
 services:
   # ===========================================
+  # Nginx - Reverse Proxy
+  # ===========================================
+  nginx:
+    image: nginx:alpine
+    container_name: npmBridge-nginx
+    ports:
+      - "${HTTP_PORT:-8013}:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - webapp
+      - verdaccio
+    restart: unless-stopped
+
+  # ===========================================
   # Verdaccio - NPM Registry Proxy/Cache
   # ===========================================
   verdaccio:
     image: verdaccio/verdaccio:latest
-    container_name: npm-hub-verdaccio
-    ports:
-      - "${VERDACCIO_PORT:-4873}:4873"
+    container_name: npmBridge-verdaccio
+    # Порт не публикуем наружу - только через nginx
+    expose:
+      - "4873"
     volumes:
       - ${STORAGE_DIR:-./storage}:/verdaccio/storage
       - ${VERDACCIO_CONF:-./verdaccio/conf}:/verdaccio/conf
@@ -29,8 +45,9 @@ services:
       context: ./webapp
       dockerfile: Dockerfile
     container_name: npmBridge-webapp
-    ports:
-      - "${WEBAPP_PORT:-4013}:3000"
+    # Порт не публикуем наружу - только через nginx
+    expose:
+      - "3000"
     volumes:
       # Монтируем storage для чтения/записи
       - ${STORAGE_DIR:-/mnt/repo/npmBridge/storage}:/app/storage:ro
@@ -56,11 +73,6 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-volumes:
-  storage:
-  frozen:
-  diff_archives:
-
 networks:
   default:
-    name: npm-hub-network
+    name: npmBridge-network

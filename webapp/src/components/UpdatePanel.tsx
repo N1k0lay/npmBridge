@@ -1,15 +1,9 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { Play, Square, RefreshCw, Clock, Settings } from 'lucide-react';
 import { useTaskPolling } from '@/hooks/useTaskPolling';
 import { ProgressBar } from './ProgressBar';
-
-interface RunningUpdate {
-  id: string;
-  type: 'full' | 'recent';
-  startedAt: string;
-}
 
 interface UpdatePanelProps {
   onUpdate?: () => void;
@@ -67,7 +61,7 @@ export function UpdatePanel({ onUpdate }: UpdatePanelProps) {
       } else {
         alert(data.error || 'Ошибка запуска обновления');
       }
-    } catch (error) {
+    } catch {
       alert('Ошибка сети');
     } finally {
       setIsStarting(false);
@@ -82,7 +76,7 @@ export function UpdatePanel({ onUpdate }: UpdatePanelProps) {
         method: 'DELETE',
       });
       setTaskId(null);
-    } catch (error) {
+    } catch {
       alert('Ошибка остановки');
     }
   };
@@ -119,7 +113,7 @@ export function UpdatePanel({ onUpdate }: UpdatePanelProps) {
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Период для "недавних" (часов)
+              Период для &quot;недавних&quot; (часов)
             </label>
             <input
               type="number"

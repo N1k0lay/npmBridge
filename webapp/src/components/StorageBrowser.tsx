@@ -1,21 +1,16 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { Database, Search, Folder, Package, ChevronRight, ExternalLink } from 'lucide-react';
-
-interface PackageVersion {
-  version: string;
-  filename: string;
-  size: number;
-  mtime: string;
-}
-
-interface PackageInfo {
-  name: string;
-  scope?: string;
-  versions: PackageVersion[];
-  latestVersion?: string;
-}
+import { useState, useCallback, useRef } from 'react';
+import { useRouter } from 'next/navigation';
+import useSWR from 'swr';
+import { 
+  Search, 
+  Package, 
+  ChevronRight, 
+  Loader2
+} from 'lucide-react';
+import { useDebounce, useIntersectionObserver } from '@/hooks/useDebounce';
+import IndexingStatusIndicator from './IndexingStatus';
 
 interface StorageStats {
   totalPackages: number;
@@ -24,268 +19,283 @@ interface StorageStats {
   totalSizeHuman: string;
 }
 
-function formatSize(bytes: number): string {
-  const units = ['B', 'KB', 'MB', 'GB'];
-  let size = bytes;
-  let unitIndex = 0;
-  
-  while (size >= 1024 && unitIndex < units.length - 1) {
-    size /= 1024;
-    unitIndex++;
-  }
-  
-  return `${size.toFixed(2)} ${units[unitIndex]}`;
+interface PackageSearchResult {
+  name: string;
+  scope?: string;
+  isScoped: boolean;
+  latestVersion?: string;
+  versionsCount: number;
+  description?: string;
 }
 
-function formatDate(dateStr: string): string {
-  return new Date(dateStr).toLocaleString('ru-RU');
+interface SearchResponse {
+  items: PackageSearchResult[];
+  total: number;
+  page: number;
+  limit: number;
+  hasMore: boolean;
 }
+
+interface SuggestResponse {
+  suggestions: PackageSearchResult[];
+}
+
+const fetcher = (url: string) => fetch(url).then(res => res.json());
 
 export function StorageBrowser() {
-  const [stats, setStats] = useState<StorageStats | null>(null);
-  const [packages, setPackages] = useState<string[]>([]);
-  const [scopes, setScopes] = useState<string[]>([]);
-  const [selectedScope, setSelectedScope] = useState<string | null>(null);
-  const [selectedPackage, setSelectedPackage] = useState<string | null>(null);
-  const [packageInfo, setPackageInfo] = useState<PackageInfo | null>(null);
+  const router = useRouter();
   const [searchQuery, setSearchQuery] = useState('');
-  const [isLoading, setIsLoading] = useState(true);
+  const [searchResults, setSearchResults] = useState<PackageSearchResult[]>([]);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
+  const [totalResults, setTotalResults] = useState(0);
+  const [isSearching, setIsSearching] = useState(false);
+  const [hasSearched, setHasSearched] = useState(false);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  
+  const debouncedQuery = useDebounce(searchQuery, 300);
+  
+  const { data: stats } = useSWR<StorageStats>('/api/storage?action=stats', fetcher, {
+    refreshInterval: 60000,
+    revalidateOnFocus: false,
+  });
+  
+  const { data: suggestData } = useSWR<SuggestResponse>(
+    debouncedQuery.length >= 2 && showSuggestions
+      ? `/api/storage?action=suggest&q=${encodeURIComponent(debouncedQuery)}`
+      : null,
+    fetcher,
+    { revalidateOnFocus: false }
+  );
 
-  // Загрузка статистики и списка scopes
-  useEffect(() => {
-    const loadInitialData = async () => {
-      try {
-        const [statsRes, scopesRes] = await Promise.all([
-          fetch('/api/storage?action=stats'),
-          fetch('/api/storage?action=scopes'),
-        ]);
-        
-        const statsData = await statsRes.json();
-        const scopesData = await scopesRes.json();
-        
-        setStats(statsData);
-        setScopes(scopesData.scopes || []);
-      } catch (error) {
-        console.error('Error loading initial data:', error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-    
-    loadInitialData();
-  }, []);
-
-  // Загрузка списка пакетов
-  useEffect(() => {
-    const loadPackages = async () => {
-      try {
-        const url = selectedScope 
-          ? `/api/storage?action=list&scope=${encodeURIComponent(selectedScope)}`
-          : '/api/storage?action=list';
-        
-        const res = await fetch(url);
-        const data = await res.json();
-        setPackages(data.packages || []);
-      } catch (error) {
-        console.error('Error loading packages:', error);
-      }
-    };
-    
-    loadPackages();
-  }, [selectedScope]);
-
-  // Загрузка информации о пакете
-  useEffect(() => {
-    if (!selectedPackage) {
-      setPackageInfo(null);
+  const performSearch = useCallback(async (query: string, pageNum: number = 1, append: boolean = false) => {
+    if (!query.trim()) {
+      setSearchResults([]);
+      setHasSearched(false);
       return;
     }
     
-    const loadPackageInfo = async () => {
-      try {
-        const res = await fetch(`/api/storage?action=package&package=${encodeURIComponent(selectedPackage)}`);
-        const data = await res.json();
-        setPackageInfo(data);
-      } catch (error) {
-        console.error('Error loading package info:', error);
-      }
-    };
-    
-    loadPackageInfo();
-  }, [selectedPackage]);
-
-  // Поиск пакетов
-  const handleSearch = async () => {
-    if (!searchQuery.trim()) {
-      return;
-    }
+    setIsSearching(true);
+    setHasSearched(true);
+    setShowSuggestions(false);
     
     try {
-      const res = await fetch(`/api/storage?action=search&q=${encodeURIComponent(searchQuery)}`);
-      const data = await res.json();
-      setPackages(data.packages || []);
-      setSelectedScope(null);
+      const res = await fetch(
+        `/api/storage?action=search&q=${encodeURIComponent(query)}&page=${pageNum}&limit=30`
+      );
+      const data: SearchResponse = await res.json();
+      
+      if (append) {
+        setSearchResults(prev => [...prev, ...data.items]);
+      } else {
+        setSearchResults(data.items);
+      }
+      
+      setPage(pageNum);
+      setHasMore(data.hasMore);
+      setTotalResults(data.total);
     } catch (error) {
       console.error('Error searching packages:', error);
+    } finally {
+      setIsSearching(false);
+    }
+  }, []);
+
+  const loadMore = useCallback(() => {
+    if (!isSearching && hasMore && searchQuery) {
+      performSearch(searchQuery, page + 1, true);
+    }
+  }, [isSearching, hasMore, searchQuery, page, performSearch]);
+
+  const loadMoreRef = useIntersectionObserver(loadMore);
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      setShowSuggestions(false);
+      performSearch(searchQuery, 1, false);
+    } else if (e.key === 'Escape') {
+      setShowSuggestions(false);
     }
   };
 
-  const filteredPackages = searchQuery 
-    ? packages.filter(pkg => pkg.toLowerCase().includes(searchQuery.toLowerCase()))
-    : packages;
+  const selectSuggestion = (pkg: PackageSearchResult) => {
+    setShowSuggestions(false);
+    router.push(`/package/${encodeURIComponent(pkg.name)}`);
+  };
+
+  const openPackage = (packageName: string) => {
+    router.push(`/package/${encodeURIComponent(packageName)}`);
+  };
 
   return (
-    <div className="bg-white rounded-lg shadow-lg p-6">
-      <h2 className="text-xl font-semibold flex items-center gap-2 mb-4">
-        <Database className="w-5 h-5" />
-        Обзор Storage
-      </h2>
-
-      {/* Статистика */}
-      {stats && (
-        <div className="grid grid-cols-3 gap-4 mb-6">
-          <div className="p-4 bg-blue-50 rounded-lg text-center">
-            <div className="text-2xl font-bold text-blue-600">{stats.totalPackages}</div>
-            <div className="text-sm text-gray-600">Пакетов</div>
-          </div>
-          <div className="p-4 bg-green-50 rounded-lg text-center">
-            <div className="text-2xl font-bold text-green-600">{stats.totalVersions}</div>
-            <div className="text-sm text-gray-600">Версий</div>
-          </div>
-          <div className="p-4 bg-purple-50 rounded-lg text-center">
-            <div className="text-2xl font-bold text-purple-600">{stats.totalSizeHuman}</div>
-            <div className="text-sm text-gray-600">Размер</div>
-          </div>
-        </div>
-      )}
-
-      {/* Поиск */}
-      <div className="flex gap-2 mb-4">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-            placeholder="Поиск пакетов..."
-            className="w-full pl-10 pr-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-          />
-        </div>
-        <button
-          onClick={handleSearch}
-          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-        >
-          Найти
-        </button>
+    <div className="max-w-4xl mx-auto">
+      <div className="flex justify-end mb-4">
+        <IndexingStatusIndicator />
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
-        {/* Левая панель - список пакетов */}
-        <div className="border rounded-lg">
-          {/* Scopes */}
-          <div className="p-2 border-b bg-gray-50">
-            <div className="flex flex-wrap gap-1">
-              <button
-                onClick={() => {
-                  setSelectedScope(null);
-                  setSelectedPackage(null);
-                }}
-                className={`px-2 py-1 text-xs rounded ${
-                  !selectedScope ? 'bg-blue-600 text-white' : 'bg-gray-200 hover:bg-gray-300'
-                }`}
-              >
-                Все
-              </button>
-              {scopes.map((scope) => (
-                <button
-                  key={scope}
-                  onClick={() => {
-                    setSelectedScope(scope);
-                    setSelectedPackage(null);
-                  }}
-                  className={`px-2 py-1 text-xs rounded ${
-                    selectedScope === scope ? 'bg-blue-600 text-white' : 'bg-gray-200 hover:bg-gray-300'
-                  }`}
-                >
-                  {scope}
-                </button>
-              ))}
-            </div>
-          </div>
+      <div className="text-center py-12">
+        <h1 className="text-4xl font-bold text-gray-900 mb-4">
+          Поиск NPM пакетов
+        </h1>
+        <p className="text-gray-600 mb-8">
+          {stats ? (
+            <>Найдите нужный пакет среди <span className="font-semibold">{stats.totalPackages.toLocaleString()}</span> доступных</>
+          ) : (
+            'Поиск по локальному NPM репозиторию'
+          )}
+        </p>
 
-          {/* Список пакетов */}
-          <div className="h-64 overflow-y-auto">
-            {isLoading ? (
-              <div className="p-4 text-center text-gray-500">Загрузка...</div>
-            ) : filteredPackages.length === 0 ? (
-              <div className="p-4 text-center text-gray-500">Пакеты не найдены</div>
-            ) : (
-              filteredPackages.slice(0, 100).map((pkg) => (
-                <button
-                  key={pkg}
-                  onClick={() => setSelectedPackage(pkg)}
-                  className={`w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-gray-100 ${
-                    selectedPackage === pkg ? 'bg-blue-50' : ''
-                  }`}
-                >
-                  <Package className="w-4 h-4 text-gray-400 flex-shrink-0" />
-                  <span className="truncate text-sm">{pkg}</span>
-                  <ChevronRight className="w-4 h-4 text-gray-400 ml-auto flex-shrink-0" />
-                </button>
-              ))
-            )}
-            {filteredPackages.length > 100 && (
-              <div className="p-2 text-center text-sm text-gray-500">
-                Показано 100 из {filteredPackages.length}
-              </div>
-            )}
+        <div className="max-w-2xl mx-auto relative">
+          <div className="flex gap-2">
+            <div className="relative flex-1">
+              <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
+              <input
+                ref={searchInputRef}
+                type="text"
+                value={searchQuery}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value);
+                  setShowSuggestions(true);
+                }}
+                onKeyDown={handleKeyDown}
+                onFocus={() => setShowSuggestions(true)}
+                onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
+                placeholder="Поиск пакетов..."
+                className="w-full pl-12 pr-4 py-4 text-lg border-2 border-gray-200 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500 transition-all"
+                autoFocus
+              />
+              
+              {showSuggestions && suggestData?.suggestions && suggestData.suggestions.length > 0 && (
+                <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-lg shadow-xl border max-h-80 overflow-y-auto z-50">
+                  {suggestData.suggestions.map((pkg) => (
+                    <button
+                      key={pkg.name}
+                      onClick={() => selectSuggestion(pkg)}
+                      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 text-left border-b last:border-0"
+                    >
+                      <Package className="w-5 h-5 text-gray-400 flex-shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <div className="font-medium text-gray-900 truncate">{pkg.name}</div>
+                        {pkg.description && (
+                          <div className="text-sm text-gray-500 truncate">{pkg.description}</div>
+                        )}
+                      </div>
+                      {pkg.latestVersion && (
+                        <span className="text-xs text-gray-400 font-mono flex-shrink-0">
+                          {pkg.latestVersion}
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <button
+              onClick={() => performSearch(searchQuery, 1, false)}
+              disabled={isSearching}
+              className="px-8 py-4 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors font-medium disabled:opacity-50 flex-shrink-0"
+            >
+              {isSearching ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Найти'}
+            </button>
           </div>
         </div>
 
-        {/* Правая панель - детали пакета */}
-        <div className="border rounded-lg p-4">
-          {packageInfo ? (
-            <div>
-              <h3 className="font-medium mb-2 flex items-center gap-2">
-                <Package className="w-4 h-4" />
-                {packageInfo.scope ? `${packageInfo.scope}/` : ''}{packageInfo.name}
-              </h3>
-              
-              {packageInfo.latestVersion && (
-                <div className="text-sm text-gray-600 mb-3">
-                  Latest: <span className="font-mono">{packageInfo.latestVersion}</span>
-                </div>
-              )}
+        {stats && (
+          <div className="flex justify-center gap-8 mt-8">
+            <div className="text-center">
+              <div className="text-2xl font-bold text-gray-900">{stats.totalPackages.toLocaleString()}</div>
+              <div className="text-sm text-gray-500">Пакетов</div>
+            </div>
+            <div className="text-center">
+              <div className="text-2xl font-bold text-gray-900">{stats.totalVersions.toLocaleString()}</div>
+              <div className="text-sm text-gray-500">Версий</div>
+            </div>
+            <div className="text-center">
+              <div className="text-2xl font-bold text-gray-900">{stats.totalSizeHuman}</div>
+              <div className="text-sm text-gray-500">Размер</div>
+            </div>
+          </div>
+        )}
+      </div>
 
-              <h4 className="text-sm font-medium mb-2">
-                Версии ({packageInfo.versions.length})
-              </h4>
-              
-              <div className="space-y-2 max-h-48 overflow-y-auto">
-                {packageInfo.versions.map((version) => (
-                  <div
-                    key={version.filename}
-                    className="flex items-center justify-between p-2 bg-gray-50 rounded text-sm"
-                  >
-                    <div>
-                      <span className="font-mono">{version.version}</span>
-                      <span className="text-gray-500 ml-2">{formatSize(version.size)}</span>
-                    </div>
-                    <span className="text-xs text-gray-400">
-                      {formatDate(version.mtime)}
-                    </span>
-                  </div>
-                ))}
-              </div>
+      {hasSearched && (
+        <div className="mt-8">
+          {searchResults.length === 0 && !isSearching ? (
+            <div className="text-center py-12 bg-white rounded-lg shadow">
+              <Package className="w-12 h-12 text-gray-300 mx-auto mb-4" />
+              <p className="text-gray-500">Пакеты не найдены</p>
+              <p className="text-sm text-gray-400 mt-2">Попробуйте изменить поисковый запрос</p>
             </div>
           ) : (
-            <div className="h-full flex items-center justify-center text-gray-500">
-              Выберите пакет для просмотра
+            <div className="bg-white rounded-lg shadow-lg overflow-hidden">
+              <div className="px-4 py-3 bg-gray-50 border-b flex items-center justify-between">
+                <span className="text-sm text-gray-600">
+                  Найдено: <span className="font-semibold">{totalResults.toLocaleString()}</span> пакетов
+                </span>
+              </div>
+              <div className="divide-y">
+                {searchResults.map((pkg) => (
+                  <button
+                    key={pkg.name}
+                    onClick={() => openPackage(pkg.name)}
+                    className="w-full flex items-center gap-4 px-4 py-4 hover:bg-gray-50 transition-colors text-left"
+                  >
+                    <Package className="w-10 h-10 text-red-400 flex-shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-gray-900">{pkg.name}</span>
+                        {pkg.latestVersion && (
+                          <span className="text-xs text-gray-400 font-mono bg-gray-100 px-1.5 py-0.5 rounded">
+                            {pkg.latestVersion}
+                          </span>
+                        )}
+                      </div>
+                      {pkg.description && (
+                        <div className="text-sm text-gray-500 truncate mt-0.5">{pkg.description}</div>
+                      )}
+                      <div className="text-xs text-gray-400 mt-1">
+                        {pkg.versionsCount} версий
+                      </div>
+                    </div>
+                    <ChevronRight className="w-5 h-5 text-gray-400 flex-shrink-0" />
+                  </button>
+                ))}
+              </div>
+              
+              {hasMore && (
+                <div ref={loadMoreRef} className="py-4 text-center">
+                  {isSearching ? (
+                    <Loader2 className="w-6 h-6 animate-spin mx-auto text-gray-400" />
+                  ) : (
+                    <span className="text-sm text-gray-400">Прокрутите для загрузки ещё</span>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </div>
-      </div>
+      )}
+
+      {!hasSearched && (
+        <div className="mt-12 text-center text-gray-500">
+          <p className="mb-4">Начните вводить название пакета для поиска</p>
+          <div className="flex justify-center gap-2 flex-wrap">
+            {['react', 'lodash', 'typescript', 'express', 'next'].map((example) => (
+              <button
+                key={example}
+                onClick={() => {
+                  setSearchQuery(example);
+                  performSearch(example, 1, false);
+                }}
+                className="px-3 py-1 bg-gray-100 hover:bg-gray-200 rounded-full text-sm transition-colors"
+              >
+                {example}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

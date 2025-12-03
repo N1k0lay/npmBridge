@@ -31,7 +31,7 @@ webapp/logs/
 *.db
 *.db-wal
 *.db-shm
-npm-hub.db*
+npmBridge.db*
 
 # Verdaccio storage and archives
 verdaccio/storage/

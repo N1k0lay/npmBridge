@@ -1,11 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: 'standalone',
-  experimental: {
-    serverActions: {
-      bodySizeLimit: '50gb',
-    },
-  },
+  serverExternalPackages: ['better-sqlite3'],
   // Увеличиваем таймаут для больших файлов
   httpAgentOptions: {
     keepAlive: true,

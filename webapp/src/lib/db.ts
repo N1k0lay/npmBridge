@@ -13,7 +13,7 @@ export function getDb(): Database.Database {
     // Создаём директорию если не существует
     fs.mkdirSync(config.dataDir, { recursive: true });
     
-    const dbPath = path.join(config.dataDir, 'npm-hub.db');
+    const dbPath = path.join(config.dataDir, 'npmBridge.db');
     db = new Database(dbPath);
     
     // Включаем WAL mode для лучшей производительности
@@ -128,12 +128,49 @@ function initSchema(database: Database.Database): void {
       value TEXT
     );
 
+    -- Кэш статистики storage
+    CREATE TABLE IF NOT EXISTS storage_stats_cache (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      total_packages INTEGER DEFAULT 0,
+      total_versions INTEGER DEFAULT 0,
+      total_size INTEGER DEFAULT 0,
+      updated_at TEXT NOT NULL
+    );
+
+    -- Индекс пакетов для быстрого поиска
+    CREATE TABLE IF NOT EXISTS packages_index (
+      name TEXT PRIMARY KEY,
+      scope TEXT,
+      is_scoped INTEGER DEFAULT 0,
+      latest_version TEXT,
+      versions_count INTEGER DEFAULT 0,
+      total_size INTEGER DEFAULT 0,
+      last_updated TEXT,
+      package_json TEXT, -- JSON полностью
+      indexed_at TEXT NOT NULL
+    );
+
     -- Индексы
     CREATE INDEX IF NOT EXISTS idx_diffs_status ON diffs(status);
     CREATE INDEX IF NOT EXISTS idx_diffs_created_at ON diffs(created_at);
     CREATE INDEX IF NOT EXISTS idx_updates_status ON updates(status);
     CREATE INDEX IF NOT EXISTS idx_updates_started_at ON updates(started_at);
     CREATE INDEX IF NOT EXISTS idx_broken_checks_status ON broken_checks(status);
+    CREATE INDEX IF NOT EXISTS idx_packages_scope ON packages_index(scope);
+    CREATE INDEX IF NOT EXISTS idx_packages_is_scoped ON packages_index(is_scoped);
+    CREATE INDEX IF NOT EXISTS idx_packages_last_updated ON packages_index(last_updated);
+
+    -- Состояние индексации
+    CREATE TABLE IF NOT EXISTS indexing_status (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      is_indexing INTEGER DEFAULT 0,
+      started_at TEXT,
+      finished_at TEXT,
+      packages_indexed INTEGER DEFAULT 0,
+      packages_total INTEGER DEFAULT 0,
+      last_error TEXT,
+      stats_updated_at TEXT
+    );
   `);
 
   // Инициализация дефолтных сетей если таблица пуста
@@ -165,7 +202,7 @@ function loadDefaultNetworks(database: Database.Database): void {
         networks = data.networks;
       }
     }
-  } catch (e) {
+  } catch {
     console.warn('Could not load default networks, using built-in defaults');
   }
 

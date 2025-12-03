@@ -4,7 +4,6 @@ import {
   addNetwork,
   updateNetwork,
   deleteNetwork,
-  getNetworkState,
   loadNetworkStates,
   initializeNetworkDirectories,
 } from '@/lib/networks';
