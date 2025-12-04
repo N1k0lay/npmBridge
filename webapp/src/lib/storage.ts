@@ -947,6 +947,129 @@ export async function getPackageHistory(
 }
 
 /**
+ * Получение недавно загруженных пакетов (по mtime файлов .tgz)
+ * Сканирует файловую систему напрямую для актуальных данных
+ */
+export async function getRecentDownloads(
+  hours: number = 24,
+  limit: number = 100
+): Promise<{
+  items: Array<{
+    name: string;
+    version: string;
+    filename: string;
+    size: number;
+    downloadedAt: string;
+  }>;
+  total: number;
+}> {
+  const storagePath = config.storageDir;
+  const cutoffTime = Date.now() - hours * 60 * 60 * 1000;
+  const recentFiles: Array<{
+    name: string;
+    version: string;
+    filename: string;
+    size: number;
+    downloadedAt: string;
+    mtime: number;
+  }> = [];
+  
+  try {
+    // Сканируем все директории в storage
+    const entries = await fs.readdir(storagePath, { withFileTypes: true });
+    
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+      
+      const packagePath = path.join(storagePath, entry.name);
+      
+      if (entry.name.startsWith('@')) {
+        // Scoped package - нужно просканировать поддиректории
+        try {
+          const scopeEntries = await fs.readdir(packagePath, { withFileTypes: true });
+          for (const scopeEntry of scopeEntries) {
+            if (!scopeEntry.isDirectory() || scopeEntry.name.startsWith('.')) continue;
+            
+            const scopedPackagePath = path.join(packagePath, scopeEntry.name);
+            const packageName = `${entry.name}/${scopeEntry.name}`;
+            
+            await scanPackageForRecent(scopedPackagePath, packageName, cutoffTime, recentFiles);
+          }
+        } catch {
+          // ignore
+        }
+      } else {
+        // Regular package
+        await scanPackageForRecent(packagePath, entry.name, cutoffTime, recentFiles);
+      }
+    }
+    
+    // Сортируем по времени загрузки (новые первыми)
+    recentFiles.sort((a, b) => b.mtime - a.mtime);
+    
+    return {
+      items: recentFiles.slice(0, limit).map(f => ({
+        name: f.name,
+        version: f.version,
+        filename: f.filename,
+        size: f.size,
+        downloadedAt: f.downloadedAt,
+      })),
+      total: recentFiles.length,
+    };
+  } catch (error) {
+    console.error('Error scanning recent downloads:', error);
+    return { items: [], total: 0 };
+  }
+}
+
+/**
+ * Вспомогательная функция для сканирования пакета на недавние файлы
+ */
+async function scanPackageForRecent(
+  packagePath: string,
+  packageName: string,
+  cutoffTime: number,
+  results: Array<{
+    name: string;
+    version: string;
+    filename: string;
+    size: number;
+    downloadedAt: string;
+    mtime: number;
+  }>
+): Promise<void> {
+  try {
+    const files = await fs.readdir(packagePath);
+    
+    for (const file of files) {
+      if (!file.endsWith('.tgz')) continue;
+      
+      const filePath = path.join(packagePath, file);
+      const stats = await fs.stat(filePath);
+      const mtime = stats.mtime.getTime();
+      
+      if (mtime >= cutoffTime) {
+        // Извлекаем версию из имени файла
+        const versionMatch = file.match(/(\d+\.\d+\.\d+(?:-[\w.]+)?)/);
+        const version = versionMatch ? versionMatch[1] : 'unknown';
+        
+        results.push({
+          name: packageName,
+          version,
+          filename: file,
+          size: stats.size,
+          downloadedAt: stats.mtime.toISOString(),
+          mtime,
+        });
+      }
+    }
+  } catch {
+    // ignore
+  }
+}
+
+/**
  * Получение пути к файлу архива пакета
  */
 export function getPackageArchivePath(packageName: string, filename: string): string {

@@ -12,6 +12,7 @@ interface ProgressBarProps {
     failed?: number;
     broken?: number;
     phase?: string;
+    errors?: Array<{ package: string; error: string }>;
   } | null;
   status: {
     status: string;
@@ -110,6 +111,25 @@ export function ProgressBar({ progress, status, isRunning }: ProgressBarProps) {
                   ⚠ Битых: {progress.broken}
                 </span>
               )}
+            </div>
+          )}
+
+          {/* Список ошибок */}
+          {progress.errors && progress.errors.length > 0 && (
+            <div className="mt-3 border-t pt-3">
+              <details className="text-sm">
+                <summary className="cursor-pointer text-red-600 hover:text-red-700 font-medium">
+                  Показать ошибки ({progress.errors.length})
+                </summary>
+                <div className="mt-2 max-h-48 overflow-y-auto space-y-2">
+                  {progress.errors.map((err, idx) => (
+                    <div key={idx} className="bg-red-50 border border-red-200 rounded p-2">
+                      <div className="font-mono text-red-800 font-medium">{err.package}</div>
+                      <div className="text-red-600 text-xs mt-1 break-all">{err.error}</div>
+                    </div>
+                  ))}
+                </div>
+              </details>
             </div>
           )}
         </div>

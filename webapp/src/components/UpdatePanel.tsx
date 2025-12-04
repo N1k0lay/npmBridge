@@ -111,18 +111,6 @@ export function UpdatePanel({ onUpdate }: UpdatePanelProps) {
               className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             />
           </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Период для &quot;недавних&quot; (часов)
-            </label>
-            <input
-              type="number"
-              value={modifiedHours}
-              onChange={(e) => setModifiedHours(parseInt(e.target.value) || 1)}
-              min={1}
-              className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            />
-          </div>
         </div>
       )}
 
@@ -136,14 +124,29 @@ export function UpdatePanel({ onUpdate }: UpdatePanelProps) {
           Обновить все
         </button>
         
-        <button
-          onClick={() => startUpdate('recent')}
-          disabled={isRunning || isStarting}
-          className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-        >
-          <Clock className="w-4 h-4" />
-          Обновить недавние
-        </button>
+        <div className="flex-1 flex gap-1">
+          <button
+            onClick={() => startUpdate('recent')}
+            disabled={isRunning || isStarting}
+            className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-green-600 text-white rounded-l-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            <Clock className="w-4 h-4" />
+            Недавние
+          </button>
+          <select
+            value={modifiedHours}
+            onChange={(e) => setModifiedHours(parseInt(e.target.value))}
+            disabled={isRunning || isStarting}
+            className="px-2 py-3 bg-green-600 text-white rounded-r-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors border-l border-green-500 cursor-pointer"
+          >
+            <option value={1}>1ч</option>
+            <option value={6}>6ч</option>
+            <option value={12}>12ч</option>
+            <option value={24}>24ч</option>
+            <option value={72}>3д</option>
+            <option value={168}>7д</option>
+          </select>
+        </div>
 
         {isRunning && (
           <button

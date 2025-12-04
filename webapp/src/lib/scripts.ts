@@ -50,6 +50,7 @@ export interface TaskProgress {
   failed?: number;
   broken?: number;
   phase?: string;
+  errors?: Array<{ package: string; error: string }>;
   updatedAt: string;
 }
 

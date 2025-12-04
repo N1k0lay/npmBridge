@@ -17,6 +17,22 @@ services:
     restart: unless-stopped
 
   # ===========================================
+  # Storage Init - исправление прав доступа
+  # ===========================================
+  storage-init:
+    image: alpine:latest
+    container_name: npmBridge-storage-init
+    volumes:
+      - ${STORAGE_DIR:-./storage}:/verdaccio/storage
+      - ./scripts/init-storage.sh:/init-storage.sh:ro
+    environment:
+      - STORAGE_DIR=/verdaccio/storage
+      - VERDACCIO_UID=10001
+      - VERDACCIO_GID=65533
+    command: ["/bin/sh", "/init-storage.sh"]
+    restart: "no"
+
+  # ===========================================
   # Verdaccio - NPM Registry Proxy/Cache
   # ===========================================
   verdaccio:
@@ -30,6 +46,9 @@ services:
       - ${VERDACCIO_CONF:-./verdaccio/conf}:/verdaccio/conf
     environment:
       - VERDACCIO_PORT=4873
+    depends_on:
+      storage-init:
+        condition: service_completed_successfully
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:4873/-/ping"]

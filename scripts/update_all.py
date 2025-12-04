@@ -42,9 +42,10 @@ class ProgressTracker:
         self.current_package = ""
         self.success = 0
         self.failed = 0
+        self.errors = []  # Список ошибок: [{"package": ..., "error": ...}, ...]
         self.lock = Lock()
     
-    def increment(self, package: str, success: bool):
+    def increment(self, package: str, success: bool, error_msg: str = ""):
         with self.lock:
             self.current += 1
             self.current_package = package
@@ -52,6 +53,7 @@ class ProgressTracker:
                 self.success += 1
             else:
                 self.failed += 1
+                self.errors.append({"package": package, "error": error_msg[:500]})
             
             # Обновляем файл прогресса каждые 10 пакетов или в конце
             if self.current % 10 == 0 or self.current == self.total:
@@ -66,6 +68,7 @@ class ProgressTracker:
             "failed": self.failed,
             "currentPackage": self.current_package,
             "percent": round(percent, 2),
+            "errors": self.errors[-20:],  # Последние 20 ошибок
             "updatedAt": datetime.now().isoformat()
         }
         try:
@@ -130,6 +133,7 @@ def install_package(package: str, tracker: ProgressTracker) -> bool:
     """Установка одного пакета"""
     temp_dir = tempfile.mkdtemp()
     success = False
+    error_msg = ""
     
     try:
         result = subprocess.run(
@@ -143,15 +147,18 @@ def install_package(package: str, tracker: ProgressTracker) -> bool:
         if success:
             log('INFO', f'✓ {package}')
         else:
-            log('ERROR', f'✗ {package}: {result.stderr.decode()[:200]}')
+            error_msg = result.stderr.decode()[:500] or result.stdout.decode()[:500]
+            log('ERROR', f'✗ {package}: {error_msg[:200]}')
     
     except subprocess.TimeoutExpired:
+        error_msg = "timeout (300s)"
         log('ERROR', f'✗ {package}: timeout')
     except Exception as e:
-        log('ERROR', f'✗ {package}: {str(e)}')
+        error_msg = str(e)
+        log('ERROR', f'✗ {package}: {error_msg}')
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
-        tracker.increment(package, success)
+        tracker.increment(package, success, error_msg)
     
     return success
 
@@ -208,7 +215,8 @@ def main():
     result = {
         "totalPackages": total,
         "success": tracker.success,
-        "failed": tracker.failed
+        "failed": tracker.failed,
+        "errors": tracker.errors  # Все ошибки
     }
     print(json.dumps(result))
 

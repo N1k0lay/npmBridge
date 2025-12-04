@@ -7,6 +7,7 @@ import {
   searchPackages,
   getSuggestions,
   getPackageHistory,
+  getRecentDownloads,
   indexPackages,
   refreshStorageStats,
   invalidateStatsCache,
@@ -21,6 +22,7 @@ export async function GET(request: Request) {
   const query = searchParams.get('q') || '';
   const page = parseInt(searchParams.get('page') || '1', 10);
   const limit = parseInt(searchParams.get('limit') || '30', 10);
+  const hours = parseInt(searchParams.get('hours') || '24', 10);
   const sortBy = searchParams.get('sortBy') as 'name' | 'updated' | 'relevance' || 'relevance';
   
   try {
@@ -36,6 +38,10 @@ export async function GET(request: Request) {
       case 'history':
         const historyResult = await getPackageHistory(page, limit);
         return NextResponse.json(historyResult);
+      
+      case 'recent':
+        const recentResult = await getRecentDownloads(hours, limit);
+        return NextResponse.json(recentResult);
       
       case 'search':
         if (!query) {
