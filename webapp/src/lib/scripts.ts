@@ -68,7 +68,8 @@ export interface TaskStatus {
 export async function runScript(
   scriptName: string,
   taskId: string,
-  extraEnv: Record<string, string> = {}
+  extraEnv: Record<string, string> = {},
+  args: string[] = []
 ): Promise<TaskResult> {
   const scriptPath = path.join(config.scriptsDir, scriptName);
   
@@ -96,7 +97,7 @@ export async function runScript(
   };
   
   return new Promise((resolve) => {
-    const proc = spawn('python3', [scriptPath], {
+    const proc = spawn('python3', [scriptPath, ...args], {
       env,
       cwd: config.verdaccioHome,
     });

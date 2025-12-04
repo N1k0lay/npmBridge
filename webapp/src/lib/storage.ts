@@ -858,92 +858,147 @@ export interface PackageHistoryItem {
 }
 
 /**
- * Получение истории пакетов с пагинацией
+ * Получение истории пакетов с пагинацией (оптимизированное сканирование)
  */
 export async function getPackageHistory(
   page: number = 1, 
   limit: number = 50
 ): Promise<PaginatedResult<PackageHistoryItem>> {
-  const db = getDb();
+  const storagePath = config.storageDir;
   const offset = (page - 1) * limit;
   
-  // Пробуем из индекса
-  const indexCount = db.prepare('SELECT COUNT(*) as count FROM packages_index').get() as { count: number };
+  // Шаг 1: Быстро собираем список пакетов с mtime директории
+  const packageList: Array<{ name: string; scope: string | null; path: string; mtime: number }> = [];
   
-  if (indexCount.count > 0) {
-    const rows = db.prepare(`
-      SELECT name, scope, latest_version, last_updated, package_json
-      FROM packages_index 
-      ORDER BY last_updated DESC
-      LIMIT ? OFFSET ?
-    `).all(limit, offset) as Array<{
-      name: string;
-      scope: string | null;
-      latest_version: string | null;
-      last_updated: string | null;
-      package_json: string | null;
-    }>;
+  try {
+    const entries = await fs.readdir(storagePath, { withFileTypes: true });
     
-    const items: PackageHistoryItem[] = [];
-    const storagePath = config.storageDir;
-    
-    for (const row of rows) {
-      const packagePath = path.join(storagePath, row.name);
-      const versions: PackageHistoryItem['versions'] = [];
-      let totalSize = 0;
+    await Promise.all(entries.map(async (entry) => {
+      if (!entry.isDirectory() || entry.name.startsWith('.')) return;
       
-      try {
-        const entries = await fs.readdir(packagePath, { withFileTypes: true });
-        
-        for (const entry of entries) {
-          if (entry.isFile() && entry.name.endsWith('.tgz')) {
-            const filePath = path.join(packagePath, entry.name);
-            const stats = await fs.stat(filePath);
+      const packagePath = path.join(storagePath, entry.name);
+      
+      if (entry.name.startsWith('@')) {
+        // Scoped package
+        try {
+          const scopeEntries = await fs.readdir(packagePath, { withFileTypes: true });
+          await Promise.all(scopeEntries.map(async (scopeEntry) => {
+            if (!scopeEntry.isDirectory() || scopeEntry.name.startsWith('.')) return;
             
-            const versionMatch = entry.name.match(/(\d+\.\d+\.\d+(?:-[\w.]+)?)/);
-            const version = versionMatch ? versionMatch[1] : 'unknown';
-            
-            versions.push({
-              version,
-              filename: entry.name,
-              size: stats.size,
-              addedAt: stats.mtime.toISOString(),
-            });
-            
-            totalSize += stats.size;
-          }
-        }
-      } catch {
-        // ignore
+            const scopedPackagePath = path.join(packagePath, scopeEntry.name);
+            try {
+              const stat = await fs.stat(scopedPackagePath);
+              packageList.push({
+                name: `${entry.name}/${scopeEntry.name}`,
+                scope: entry.name,
+                path: scopedPackagePath,
+                mtime: stat.mtime.getTime(),
+              });
+            } catch { /* ignore */ }
+          }));
+        } catch { /* ignore */ }
+      } else {
+        try {
+          const stat = await fs.stat(packagePath);
+          packageList.push({
+            name: entry.name,
+            scope: null,
+            path: packagePath,
+            mtime: stat.mtime.getTime(),
+          });
+        } catch { /* ignore */ }
       }
+    }));
+    
+    // Сортируем по дате (новые первыми)
+    packageList.sort((a, b) => b.mtime - a.mtime);
+    
+    const total = packageList.length;
+    
+    // Шаг 2: Загружаем детали только для нужной страницы
+    const pageItems = packageList.slice(offset, offset + limit);
+    const items: PackageHistoryItem[] = [];
+    
+    await Promise.all(pageItems.map(async (pkg, idx) => {
+      const pkgInfo = await scanPackageForHistory(pkg.path, pkg.name, pkg.scope);
+      if (pkgInfo) {
+        items[idx] = pkgInfo;
+      }
+    }));
+    
+    return {
+      items: items.filter(Boolean),
+      total,
+      page,
+      limit,
+      hasMore: offset + limit < total,
+    };
+  } catch (error) {
+    console.error('Error scanning package history:', error);
+    return {
+      items: [],
+      total: 0,
+      page,
+      limit,
+      hasMore: false,
+    };
+  }
+}
+
+/**
+ * Вспомогательная функция для сканирования пакета для истории
+ */
+async function scanPackageForHistory(
+  packagePath: string,
+  packageName: string,
+  scope: string | null
+): Promise<PackageHistoryItem | null> {
+  try {
+    const entries = await fs.readdir(packagePath, { withFileTypes: true });
+    const versions: PackageHistoryItem['versions'] = [];
+    let totalSize = 0;
+    let latestMtime = 0;
+    let latestVersion = '';
+    
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith('.tgz')) continue;
       
-      items.push({
-        name: row.name,
-        scope: row.scope,
-        latestVersion: row.latest_version || '',
-        versions,
-        totalSize,
-        lastUpdated: row.last_updated || '',
+      const filePath = path.join(packagePath, entry.name);
+      const stats = await fs.stat(filePath);
+      
+      const versionMatch = entry.name.match(/(\d+\.\d+\.\d+(?:-[\w.]+)?)/);
+      const version = versionMatch ? versionMatch[1] : 'unknown';
+      
+      versions.push({
+        version,
+        filename: entry.name,
+        size: stats.size,
+        addedAt: stats.mtime.toISOString(),
       });
+      
+      totalSize += stats.size;
+      
+      if (stats.mtime.getTime() > latestMtime) {
+        latestMtime = stats.mtime.getTime();
+        latestVersion = version;
+      }
+    }
+    
+    if (versions.length === 0) {
+      return null;
     }
     
     return {
-      items,
-      total: indexCount.count,
-      page,
-      limit,
-      hasMore: offset + limit < indexCount.count,
+      name: packageName,
+      scope,
+      latestVersion,
+      versions,
+      totalSize,
+      lastUpdated: new Date(latestMtime).toISOString(),
     };
+  } catch {
+    return null;
   }
-  
-  // Фолбэк - возвращаем пустой результат
-  return {
-    items: [],
-    total: 0,
-    page,
-    limit,
-    hasMore: false,
-  };
 }
 
 /**

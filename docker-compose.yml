@@ -70,6 +70,7 @@ services:
     volumes:
       # Монтируем storage для чтения/записи
       - ${STORAGE_DIR:-/mnt/repo/npmBridge/storage}:/app/storage:ro
+      - ${PNPM_CACHE_DIR:-/mnt/repo/npmBridge/pnpm_cache}:/app/pnpm_cache
       - ${FROZEN_DIR:-/mnt/repo/npmBridge/frozen}:/app/frozen
       - ${DIFF_ARCHIVES_DIR:-/mnt/repo/npmBridge/diff_archives}:/app/diff_archives
       - ${SCRIPTS_DIR:-./scripts}:/app/scripts:ro
@@ -79,12 +80,14 @@ services:
       - NODE_ENV=production
       - VERDACCIO_HOME=/app
       - STORAGE_DIR=/app/storage
+      - PNPM_STORE_DIR=/app/pnpm_cache
       - FROZEN_DIR=/app/frozen
       - DIFF_ARCHIVES_DIR=/app/diff_archives
       - SCRIPTS_DIR=/app/scripts
       - DATA_DIR=/app/data
       - LOGS_DIR=/app/logs
       - PNPM_CMD=pnpm
+      - REGISTRY_URL=http://verdaccio:4873/
       - PARALLEL_JOBS=${PARALLEL_JOBS:-40}
       - MODIFIED_MINUTES=${MODIFIED_MINUTES:-2880}
     depends_on:

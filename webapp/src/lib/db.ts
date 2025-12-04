@@ -173,10 +173,72 @@ function initSchema(database: Database.Database): void {
     );
   `);
 
+  // Миграция: добавление поддержки type='single' в таблицу updates
+  migrateUpdatesTable(database);
+
   // Инициализация дефолтных сетей если таблица пуста
   const networksCount = database.prepare('SELECT COUNT(*) as count FROM networks').get() as { count: number };
   if (networksCount.count === 0) {
     loadDefaultNetworks(database);
+  }
+}
+
+/**
+ * Миграция таблицы updates для поддержки type='single'
+ */
+function migrateUpdatesTable(database: Database.Database): void {
+  try {
+    // Проверяем, нужна ли миграция (пробуем вставить с type='single')
+    const testStmt = database.prepare(`
+      INSERT INTO updates (id, type, started_at, status, packages_total)
+      VALUES ('__migration_test__', 'single', datetime('now'), 'completed', 0)
+    `);
+    
+    try {
+      testStmt.run();
+      // Если успешно, удаляем тестовую запись
+      database.prepare(`DELETE FROM updates WHERE id = '__migration_test__'`).run();
+      return; // Миграция не нужна
+    } catch {
+      // Миграция нужна - пересоздаём таблицу
+      console.log('[DB] Migrating updates table to support type=single...');
+      
+      database.exec(`
+        -- Создаём временную таблицу с новой схемой
+        CREATE TABLE IF NOT EXISTS updates_new (
+          id TEXT PRIMARY KEY,
+          type TEXT NOT NULL CHECK(type IN ('full', 'recent', 'single')),
+          started_at TEXT NOT NULL,
+          finished_at TEXT,
+          status TEXT NOT NULL CHECK(status IN ('running', 'completed', 'failed', 'completed_with_errors')),
+          packages_total INTEGER DEFAULT 0,
+          packages_success INTEGER DEFAULT 0,
+          packages_failed INTEGER DEFAULT 0,
+          log_file TEXT,
+          broken_check_id TEXT,
+          package_name TEXT
+        );
+
+        -- Копируем данные
+        INSERT OR IGNORE INTO updates_new (id, type, started_at, finished_at, status, packages_total, packages_success, packages_failed, log_file, broken_check_id)
+        SELECT id, type, started_at, finished_at, status, packages_total, packages_success, packages_failed, log_file, broken_check_id
+        FROM updates;
+
+        -- Удаляем старую таблицу
+        DROP TABLE updates;
+
+        -- Переименовываем новую
+        ALTER TABLE updates_new RENAME TO updates;
+
+        -- Пересоздаём индексы
+        CREATE INDEX IF NOT EXISTS idx_updates_status ON updates(status);
+        CREATE INDEX IF NOT EXISTS idx_updates_started_at ON updates(started_at);
+      `);
+      
+      console.log('[DB] Updates table migration completed');
+    }
+  } catch (error) {
+    console.error('[DB] Migration error:', error);
   }
 }
 

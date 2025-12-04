@@ -19,8 +19,10 @@ from typing import Optional
 # Конфигурация из переменных окружения
 VERDACCIO_HOME = os.environ.get('VERDACCIO_HOME', '/home/npm/verdaccio')
 STORAGE_DIR = os.environ.get('STORAGE_DIR', f'{VERDACCIO_HOME}/storage')
+PNPM_STORE_DIR = os.environ.get('PNPM_STORE_DIR', '')
 PNPM_CMD = os.environ.get('PNPM_CMD', 'pnpm')
 PARALLEL_JOBS = int(os.environ.get('PARALLEL_JOBS', '40'))
+REGISTRY_URL = os.environ.get('REGISTRY_URL', 'http://localhost:8013/')
 
 # Файлы для отслеживания прогресса
 PROGRESS_FILE = os.environ.get('PROGRESS_FILE', '/tmp/update_progress.json')
@@ -136,8 +138,12 @@ def install_package(package: str, tracker: ProgressTracker) -> bool:
     error_msg = ""
     
     try:
+        cmd = [PNPM_CMD, 'install', f'{package}@latest', '--force', f'--registry={REGISTRY_URL}']
+        if PNPM_STORE_DIR:
+            cmd.append(f'--store-dir={PNPM_STORE_DIR}')
+        
         result = subprocess.run(
-            [PNPM_CMD, 'install', f'{package}@latest', '--force'],
+            cmd,
             cwd=temp_dir,
             capture_output=True,
             timeout=300  # 5 минут таймаут на пакет

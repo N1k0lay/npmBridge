@@ -55,8 +55,52 @@ export async function GET(request: Request) {
 
 // POST - запустить обновление
 export async function POST(request: Request) {
-  const body = await request.json();
-  const { type = 'full', parallelJobs, modifiedMinutes } = body;
+  let body;
+  try {
+    const text = await request.text();
+    body = text ? JSON.parse(text) : {};
+  } catch {
+    return NextResponse.json(
+      { error: 'Invalid JSON body' },
+      { status: 400 }
+    );
+  }
+  
+  const { type = 'full', parallelJobs, modifiedMinutes, packageName } = body;
+  
+  // Для обновления одного пакета не проверяем другие задачи
+  if (type === 'single' && packageName) {
+    const taskId = `update_single_${Date.now()}`;
+    
+    // Создаём запись в истории
+    await addUpdate({
+      id: taskId,
+      type: 'single',
+      startedAt: new Date().toISOString(),
+      finishedAt: null,
+      status: 'running',
+      packagesTotal: 1,
+      packagesSuccess: 0,
+      packagesFailed: 0,
+      logFile: `${taskId}.log`,
+    });
+    
+    // Запускаем скрипт
+    runScript('update_single.py', taskId, {}, [packageName]).then(async (result) => {
+      await updateUpdateRecord(taskId, {
+        finishedAt: new Date().toISOString(),
+        status: result.success ? 'completed' : 'failed',
+        packagesTotal: 1,
+        packagesSuccess: result.success ? 1 : 0,
+        packagesFailed: result.success ? 0 : 1,
+      });
+    });
+    
+    return NextResponse.json({
+      taskId,
+      message: `Обновление пакета ${packageName} запущено`,
+    });
+  }
   
   // Проверяем, что нет запущенных обновлений
   const runningUpdate = await getRunningUpdate();

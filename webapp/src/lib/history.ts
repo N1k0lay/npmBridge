@@ -24,7 +24,7 @@ export interface DiffRecord {
 
 export interface UpdateRecord {
   id: string;
-  type: 'full' | 'recent';
+  type: 'full' | 'recent' | 'single';
   startedAt: string;
   finishedAt: string | null;
   status: 'running' | 'completed' | 'failed' | 'completed_with_errors';
@@ -33,6 +33,7 @@ export interface UpdateRecord {
   packagesFailed: number;
   logFile: string;
   brokenCheckId?: string;
+  packageName?: string; // Для type='single'
 }
 
 export interface BrokenCheckRecord {

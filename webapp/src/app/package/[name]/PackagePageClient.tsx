@@ -20,7 +20,9 @@ import {
   ExternalLink,
   BookOpen,
   Code,
-  ChevronDown
+  ChevronDown,
+  RefreshCw,
+  Loader2
 } from 'lucide-react';
 import type { PackagePageData, NpmDependencies } from '@/types/npm-package';
 
@@ -143,6 +145,9 @@ export function PackagePageClient({ packageData }: Props) {
   const [copied, setCopied] = useState<string | null>(null);
   const [showAllVersions, setShowAllVersions] = useState(false);
   const [activeTab, setActiveTab] = useState<'readme' | 'versions' | 'deps'>('readme');
+  const [isUpdating, setIsUpdating] = useState(false);
+  const [updateStatus, setUpdateStatus] = useState<'idle' | 'success' | 'error'>('idle');
+  const [updateMessage, setUpdateMessage] = useState('');
   
   const fullName = packageData.scope 
     ? `${packageData.scope}/${packageData.name}` 
@@ -156,6 +161,68 @@ export function PackagePageClient({ packageData }: Props) {
       setTimeout(() => setCopied(null), 2000);
     } catch (error) {
       console.error('Failed to copy:', error);
+    }
+  };
+
+  // Обновление пакета
+  const handleUpdatePackage = async () => {
+    setIsUpdating(true);
+    setUpdateStatus('idle');
+    setUpdateMessage('');
+    
+    try {
+      const res = await fetch('/api/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'single',
+          packageName: fullName,
+        }),
+      });
+      
+      const data = await res.json();
+      
+      if (!res.ok) {
+        throw new Error(data.error || 'Ошибка обновления');
+      }
+      
+      // Ждём завершения задачи
+      const taskId = data.taskId;
+      let attempts = 0;
+      const maxAttempts = 120; // 2 минуты
+      
+      while (attempts < maxAttempts) {
+        await new Promise(r => setTimeout(r, 1000));
+        const statusRes = await fetch(`/api/update?taskId=${taskId}`);
+        const statusData = await statusRes.json();
+        
+        if (!statusData.running) {
+          if (statusData.status?.status === 'completed') {
+            setUpdateStatus('success');
+            setUpdateMessage('Пакет успешно обновлён');
+          } else {
+            setUpdateStatus('error');
+            setUpdateMessage(statusData.status?.message || 'Ошибка обновления');
+          }
+          break;
+        }
+        attempts++;
+      }
+      
+      if (attempts >= maxAttempts) {
+        setUpdateStatus('error');
+        setUpdateMessage('Таймаут обновления');
+      }
+    } catch (err) {
+      setUpdateStatus('error');
+      setUpdateMessage(err instanceof Error ? err.message : 'Ошибка');
+    } finally {
+      setIsUpdating(false);
+      // Скрываем сообщение через 5 секунд
+      setTimeout(() => {
+        setUpdateStatus('idle');
+        setUpdateMessage('');
+      }, 5000);
     }
   };
   
@@ -179,7 +246,7 @@ export function PackagePageClient({ packageData }: Props) {
           <div className="lg:col-span-2 space-y-6">
             {/* Шапка пакета */}
             <div className="bg-white rounded-lg shadow-lg p-6">
-              <div className="flex items-start justify-between">
+              <div className="flex items-start justify-between gap-4">
                 <div className="flex-1">
                   <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-3 flex-wrap">
                     <Package className="w-8 h-8 text-red-500 flex-shrink-0" />
@@ -199,6 +266,28 @@ export function PackagePageClient({ packageData }: Props) {
                         </span>
                       ))}
                     </div>
+                  )}
+                </div>
+                
+                {/* Кнопка обновления */}
+                <div className="flex flex-col items-end gap-2">
+                  <button
+                    onClick={handleUpdatePackage}
+                    disabled={isUpdating}
+                    className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    title="Обновить пакет до последней версии из npm"
+                  >
+                    {isUpdating ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <RefreshCw className="w-4 h-4" />
+                    )}
+                    {isUpdating ? 'Обновление...' : 'Обновить'}
+                  </button>
+                  {updateStatus !== 'idle' && (
+                    <span className={`text-sm ${updateStatus === 'success' ? 'text-green-600' : 'text-red-600'}`}>
+                      {updateMessage}
+                    </span>
                   )}
                 </div>
               </div>
