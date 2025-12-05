@@ -25,10 +25,11 @@ from .progress import ProgressTracker
 
 def install_package(
     package: str,
+    version: Optional[str] = None,
     tracker: Optional[ProgressTracker] = None
 ) -> tuple[bool, str]:
     """
-    Устанавливает последнюю версию пакета через pnpm.
+    Устанавливает пакет через pnpm.
     
     Создаёт временную директорию, устанавливает пакет,
     затем удаляет директорию. Verdaccio автоматически
@@ -36,6 +37,8 @@ def install_package(
     
     Args:
         package: Имя пакета (например, "lodash" или "@types/node")
+        version: Конкретная версия для установки (например, "4.17.21").
+                 Если None — устанавливается latest.
         tracker: Опциональный трекер прогресса для обновления статистики
     
     Returns:
@@ -45,11 +48,15 @@ def install_package(
     success = False
     error_msg = ""
     
+    # Определяем версию для установки
+    version_spec = version if version else 'latest'
+    package_spec = f'{package}@{version_spec}'
+    
     try:
         # Формируем команду pnpm install
         cmd = [
             PNPM_CMD, 'install',
-            f'{package}@latest',
+            package_spec,
             '--force',
             f'--registry={REGISTRY_URL}'
         ]
@@ -68,7 +75,7 @@ def install_package(
         success = result.returncode == 0
         
         if success:
-            log('INFO', f'✓ {package}')
+            log('INFO', f'✓ {package_spec}')
         else:
             # Извлекаем сообщение об ошибке
             error_msg = (

@@ -66,11 +66,12 @@ export async function POST(request: Request) {
     );
   }
   
-  const { type = 'full', parallelJobs, modifiedMinutes, packageName } = body;
+  const { type = 'full', parallelJobs, modifiedMinutes, packageName, version } = body;
   
-  // Для обновления одного пакета не проверяем другие задачи
+  // Для обновления/установки одного пакета не проверяем другие задачи
   if (type === 'single' && packageName) {
     const taskId = `update_single_${Date.now()}`;
+    const versionStr = version ? `@${version}` : '@latest';
     
     // Создаём запись в истории
     await addUpdate({
@@ -85,8 +86,11 @@ export async function POST(request: Request) {
       logFile: `${taskId}.log`,
     });
     
+    // Аргументы скрипта: package_name [version]
+    const scriptArgs = version ? [packageName, version] : [packageName];
+    
     // Запускаем скрипт
-    runScript('update_single.py', taskId, {}, [packageName]).then(async (result) => {
+    runScript('update_single.py', taskId, {}, scriptArgs).then(async (result) => {
       await updateUpdateRecord(taskId, {
         finishedAt: new Date().toISOString(),
         status: result.success ? 'completed' : 'failed',
@@ -98,7 +102,7 @@ export async function POST(request: Request) {
     
     return NextResponse.json({
       taskId,
-      message: `Обновление пакета ${packageName} запущено`,
+      message: `Установка пакета ${packageName}${versionStr} запущена`,
     });
   }
   

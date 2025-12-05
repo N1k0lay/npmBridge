@@ -146,6 +146,7 @@ export function PackagePageClient({ packageData }: Props) {
   const [showAllVersions, setShowAllVersions] = useState(false);
   const [activeTab, setActiveTab] = useState<'readme' | 'versions' | 'deps'>('readme');
   const [isUpdating, setIsUpdating] = useState(false);
+  const [installingVersion, setInstallingVersion] = useState<string | null>(null);
   const [updateStatus, setUpdateStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [updateMessage, setUpdateMessage] = useState('');
   
@@ -164,9 +165,13 @@ export function PackagePageClient({ packageData }: Props) {
     }
   };
 
-  // Обновление пакета
-  const handleUpdatePackage = async () => {
-    setIsUpdating(true);
+  // Обновление пакета (latest или конкретная версия)
+  const handleUpdatePackage = async (version?: string) => {
+    if (version) {
+      setInstallingVersion(version);
+    } else {
+      setIsUpdating(true);
+    }
     setUpdateStatus('idle');
     setUpdateMessage('');
     
@@ -177,13 +182,14 @@ export function PackagePageClient({ packageData }: Props) {
         body: JSON.stringify({
           type: 'single',
           packageName: fullName,
+          version: version || undefined,
         }),
       });
       
       const data = await res.json();
       
       if (!res.ok) {
-        throw new Error(data.error || 'Ошибка обновления');
+        throw new Error(data.error || 'Ошибка установки');
       }
       
       // Ждём завершения задачи
@@ -199,10 +205,14 @@ export function PackagePageClient({ packageData }: Props) {
         if (!statusData.running) {
           if (statusData.status?.status === 'completed') {
             setUpdateStatus('success');
-            setUpdateMessage('Пакет успешно обновлён');
+            setUpdateMessage(version ? `Версия ${version} установлена` : 'Пакет успешно обновлён');
+            // Перезагружаем страницу чтобы показать новую версию
+            if (version) {
+              setTimeout(() => window.location.reload(), 1500);
+            }
           } else {
             setUpdateStatus('error');
-            setUpdateMessage(statusData.status?.message || 'Ошибка обновления');
+            setUpdateMessage(statusData.status?.message || 'Ошибка установки');
           }
           break;
         }
@@ -211,13 +221,14 @@ export function PackagePageClient({ packageData }: Props) {
       
       if (attempts >= maxAttempts) {
         setUpdateStatus('error');
-        setUpdateMessage('Таймаут обновления');
+        setUpdateMessage('Таймаут установки');
       }
     } catch (err) {
       setUpdateStatus('error');
       setUpdateMessage(err instanceof Error ? err.message : 'Ошибка');
     } finally {
       setIsUpdating(false);
+      setInstallingVersion(null);
       // Скрываем сообщение через 5 секунд
       setTimeout(() => {
         setUpdateStatus('idle');
@@ -272,8 +283,8 @@ export function PackagePageClient({ packageData }: Props) {
                 {/* Кнопка обновления */}
                 <div className="flex flex-col items-end gap-2">
                   <button
-                    onClick={handleUpdatePackage}
-                    disabled={isUpdating}
+                    onClick={() => handleUpdatePackage()}
+                    disabled={isUpdating || installingVersion !== null}
                     className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                     title="Обновить пакет до последней версии из npm"
                   >
@@ -428,19 +439,33 @@ export function PackagePageClient({ packageData }: Props) {
                               ) : '—'}
                             </td>
                             <td className="py-3 px-3">
-                              {version.downloaded && version.tarball ? (
-                                <a
-                                  href={version.tarball}
-                                  download
-                                  className="inline-flex items-center gap-1 px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded hover:bg-blue-200 transition-colors"
-                                  title={`Скачать ${fullName}-${version.version}.tgz`}
-                                >
-                                  <Download className="w-3 h-3" />
-                                  .tgz
-                                </a>
-                              ) : (
-                                <span className="text-gray-300">—</span>
-                              )}
+                              <div className="flex items-center gap-2">
+                                {version.downloaded && version.tarball ? (
+                                  <a
+                                    href={version.tarball}
+                                    download
+                                    className="inline-flex items-center gap-1 px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded hover:bg-blue-200 transition-colors"
+                                    title={`Скачать ${fullName}-${version.version}.tgz`}
+                                  >
+                                    <Download className="w-3 h-3" />
+                                    .tgz
+                                  </a>
+                                ) : (
+                                  <button
+                                    onClick={() => handleUpdatePackage(version.version)}
+                                    disabled={isUpdating || installingVersion !== null}
+                                    className="inline-flex items-center gap-1 px-2 py-1 text-xs bg-green-100 text-green-700 rounded hover:bg-green-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                    title={`Установить версию ${version.version}`}
+                                  >
+                                    {installingVersion === version.version ? (
+                                      <Loader2 className="w-3 h-3 animate-spin" />
+                                    ) : (
+                                      <Download className="w-3 h-3" />
+                                    )}
+                                    {installingVersion === version.version ? 'Установка...' : 'Установить'}
+                                  </button>
+                                )}
+                              </div>
                             </td>
                           </tr>
                         ))}

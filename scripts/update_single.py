@@ -3,11 +3,13 @@
 Скрипт обновления одного пакета в репозитории Verdaccio.
 
 Использование:
-    python3 update_single.py <package_name>
+    python3 update_single.py <package_name> [version]
 
 Примеры:
     python3 update_single.py lodash
+    python3 update_single.py lodash 4.17.21
     python3 update_single.py @types/node
+    python3 update_single.py @types/node 20.10.0
 
 Переменные окружения:
     STORAGE_DIR      - путь к storage Verdaccio
@@ -32,14 +34,17 @@ from lib.packages import install_package
 def main() -> None:
     """Точка входа скрипта."""
     if len(sys.argv) < 2:
-        print("Использование: update_single.py <package_name>", file=sys.stderr)
+        print("Использование: update_single.py <package_name> [version]", file=sys.stderr)
         print("Пример: update_single.py lodash", file=sys.stderr)
+        print("Пример: update_single.py lodash 4.17.21", file=sys.stderr)
         sys.exit(1)
     
     package = sys.argv[1]
+    version = sys.argv[2] if len(sys.argv) > 2 else None
     
-    log('INFO', f'Запуск обновления пакета: {package}')
-    update_status('running', f'Обновление пакета {package}...')
+    version_str = f'@{version}' if version else '@latest'
+    log('INFO', f'Запуск обновления пакета: {package}{version_str}')
+    update_status('running', f'Установка {package}{version_str}...')
     update_progress(0, 1, package, 0, 0, [])
     
     # Проверяем доступность storage
@@ -49,16 +54,16 @@ def main() -> None:
         sys.exit(1)
     
     # Обновляем пакет
-    success, error_msg = install_package(package)
+    success, error_msg = install_package(package, version)
     
     if success:
         update_progress(1, 1, package, 1, 0, [])
-        update_status('completed', f'Пакет {package} успешно обновлён')
-        log('INFO', f'Пакет {package} успешно обновлён')
+        update_status('completed', f'Пакет {package}{version_str} успешно установлен')
+        log('INFO', f'Пакет {package}{version_str} успешно установлен')
     else:
         update_progress(1, 1, package, 0, 1, [{"package": package, "error": error_msg}])
-        update_status('failed', f'Ошибка обновления {package}: {error_msg[:100]}')
-        log('ERROR', f'Не удалось обновить пакет {package}')
+        update_status('failed', f'Ошибка установки {package}{version_str}: {error_msg[:100]}')
+        log('ERROR', f'Не удалось установить пакет {package}{version_str}')
         sys.exit(1)
 
 
