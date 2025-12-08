@@ -5,6 +5,9 @@ import { Navigation, Footer } from '@/components/Navigation'
 export const metadata: Metadata = {
   title: 'npmBridge',
   description: 'Управление NPM репозиторием',
+  icons: {
+    icon: '/favicon.svg',
+  },
 }
 
 export default function RootLayout({

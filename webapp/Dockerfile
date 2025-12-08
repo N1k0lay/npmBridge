@@ -28,7 +28,8 @@ WORKDIR /app
 
 # Install pnpm, python3 for scripts, and build tools for native modules
 RUN corepack enable && corepack prepare pnpm@latest --activate \
-    && apk add --no-cache python3 py3-pip make g++
+    && apk add --no-cache python3 py3-pip make g++ \
+    && npm install -g typesync
 
 ENV NODE_ENV=production
 

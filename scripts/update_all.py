@@ -67,7 +67,7 @@ def main() -> None:
     # Параллельная обработка пакетов
     with ThreadPoolExecutor(max_workers=PARALLEL_JOBS) as executor:
         futures = {
-            executor.submit(install_package, pkg, tracker): pkg
+            executor.submit(install_package, pkg, None, tracker): pkg
             for pkg in packages
         }
         

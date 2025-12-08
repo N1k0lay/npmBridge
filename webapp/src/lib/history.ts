@@ -1,5 +1,6 @@
 import { getDb } from './db';
 import fs from 'fs';
+import { isTaskRunning } from './scripts';
 
 /**
  * Информация о переносе diff в сеть
@@ -443,6 +444,21 @@ export async function getRunningUpdate(): Promise<UpdateRecord | null> {
   
   if (!row) return null;
   
+  // Проверяем, действительно ли процесс ещё работает
+  // Если процесс не найден в памяти - значит сервер был перезапущен
+  // и задача "зависла" в статусе running
+  if (!isTaskRunning(row.id)) {
+    // Помечаем задачу как прерванную
+    db.prepare(`
+      UPDATE updates 
+      SET status = 'failed', finished_at = ? 
+      WHERE id = ?
+    `).run(new Date().toISOString(), row.id);
+    
+    console.log(`[History] Cleaned up zombie task: ${row.id}`);
+    return null;
+  }
+  
   return {
     id: row.id,
     type: row.type as 'full' | 'recent',
@@ -652,4 +668,36 @@ export async function loadHistory(): Promise<HistoryData> {
 // Заглушка для совместимости — данные сохраняются автоматически
 export async function saveHistory(_history: HistoryData): Promise<void> {
   // No-op: SQLite автоматически сохраняет данные
+}
+
+/**
+ * Очистка "зависших" задач после перезапуска сервера.
+ * Помечает все задачи со статусом 'running' как 'interrupted'.
+ * Вызывается при старте сервера.
+ */
+export async function cleanupStaleRunningTasks(): Promise<void> {
+  const db = getDb();
+  const now = new Date().toISOString();
+  
+  // Обновляем зависшие update задачи
+  const staleUpdates = db.prepare(`
+    UPDATE updates 
+    SET status = 'failed', finished_at = ?
+    WHERE status = 'running'
+  `).run(now);
+  
+  if (staleUpdates.changes > 0) {
+    console.log(`[Cleanup] Marked ${staleUpdates.changes} stale update(s) as failed`);
+  }
+  
+  // Обновляем зависшие broken check задачи  
+  const staleBrokenChecks = db.prepare(`
+    UPDATE broken_checks 
+    SET status = 'failed', finished_at = ?
+    WHERE status = 'running'
+  `).run(now);
+  
+  if (staleBrokenChecks.changes > 0) {
+    console.log(`[Cleanup] Marked ${staleBrokenChecks.changes} stale broken check(s) as failed`);
+  }
 }
