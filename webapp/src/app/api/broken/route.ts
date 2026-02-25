@@ -11,7 +11,7 @@ import {
   updateBrokenCheck, 
   getBrokenChecks,
   getLastBrokenCheck 
-} from '@/lib/history';
+} from '@/lib/store';
 
 // GET - получить статус проверки или историю
 export async function GET(request: Request) {

@@ -12,7 +12,7 @@ import {
   updateUpdateRecord, 
   getRunningUpdate,
   getUpdates 
-} from '@/lib/history';
+} from '@/lib/store';
 
 // GET - получить статус текущего обновления или историю
 export async function GET(request: Request) {

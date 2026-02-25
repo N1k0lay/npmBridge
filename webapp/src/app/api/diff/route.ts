@@ -18,8 +18,8 @@ import {
   markDiffOutdated,
   checkDiffOutdated,
   DiffRecord,
-} from '@/lib/history';
-import { getNetwork, getNetworkFrozenDir } from '@/lib/networks';
+} from '@/lib/store';
+import { getNetwork } from '@/lib/networks';
 
 // GET - получить список diff или конкретный diff
 export async function GET(request: Request) {
@@ -142,7 +142,7 @@ export async function POST(request: Request) {
       archiveSize: diffResult.archiveSize,
       archiveSizeHuman: diffResult.archiveSizeHuman,
       filesCount: diffResult.filesCount,
-      files: diffResult.files || [],
+      sinceTime: diffResult.sinceTime || null,
       storageSnapshotTime: diffResult.storageSnapshotTime,
     };
     
@@ -211,25 +211,6 @@ export async function PATCH(request: Request) {
         { error: `Diff уже перенесён в сеть "${network.name}"` },
         { status: 400 }
       );
-    }
-    
-    // Синхронизируем frozen только при ПЕРВОМ подтверждении (когда diff ещё pending)
-    // Это нужно чтобы следующий diff корректно сравнивал storage с frozen
-    // Если diff уже partial - frozen уже синхронизирован при первом подтверждении
-    if (diff.status === 'pending') {
-      const taskId = `sync_${Date.now()}`;
-      const frozenDir = getNetworkFrozenDir(networkId);
-      const result = await runScript('sync_frozen.py', taskId, {
-        DIFF_ID: diffId,
-        FROZEN_DIR: frozenDir,
-      });
-      
-      if (!result.success) {
-        return NextResponse.json(
-          { error: 'Ошибка синхронизации frozen', details: result.error },
-          { status: 500 }
-        );
-      }
     }
     
     // Помечаем diff как перенесённый в сеть

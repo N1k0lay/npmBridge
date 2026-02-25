@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { existsSync, createReadStream } from 'fs';
 import fs from 'fs/promises';
 import path from 'path';
-import { getDiff } from '@/lib/history';
+import { getDiff } from '@/lib/store';
 import { config } from '@/lib/scripts';
 
 export async function GET(

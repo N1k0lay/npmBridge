@@ -6,7 +6,6 @@ import {
   deleteNetwork,
   getNetworkState,
   loadNetworkStates,
-  initializeNetworkDirectories,
 } from '@/lib/networks';
 
 // GET - получить список сетей и их состояния
@@ -16,9 +15,6 @@ export async function GET() {
       loadNetworks(),
       loadNetworkStates(),
     ]);
-
-    // Инициализируем директории для всех сетей
-    await initializeNetworkDirectories();
 
     const networksWithStates = networks.map(network => ({
       ...network,

@@ -1,11 +1,17 @@
-import { getDb } from './db';
-import { config } from './scripts';
-import path from 'path';
-import fs from 'fs';
-
 /**
- * Конфигурация корпоративной сети
+ * networks.ts — управление корпоративными сетями.
+ * Хранение: data/networks.json (без SQLite, без frozen).
  */
+
+import fsp from 'fs/promises';
+import fs from 'fs';
+import path from 'path';
+import { config } from './scripts';
+
+// ─────────────────────────────────────────────
+// Интерфейсы
+// ─────────────────────────────────────────────
+
 export interface NetworkConfig {
   id: string;
   name: string;
@@ -13,9 +19,7 @@ export interface NetworkConfig {
   color: string;
 }
 
-/**
- * Состояние сети - информация о текущем состоянии пакетной базы
- */
+/** Оставлено для обратной совместимости API. */
 export interface NetworkState {
   networkId: string;
   lastSyncAt: string | null;
@@ -24,234 +28,166 @@ export interface NetworkState {
   totalSize: number;
 }
 
-/**
- * Получение пути к общей frozen директории
- * (После смены концепции frozen одна общая, без разделения по сетям)
- */
-export function getNetworkFrozenDir(_networkId: string): string {
-  return config.frozenDir;
+// ─────────────────────────────────────────────
+// Пути
+// ─────────────────────────────────────────────
+
+function networksFilePath(): string {
+  return path.join(config.dataDir, 'networks.json');
 }
 
-/**
- * Получение пути к общей diff_archives директории
- * (После смены концепции diff_archives одна общая, без разделения по сетям)
- */
-export function getNetworkDiffArchivesDir(_networkId: string): string {
-  return config.diffArchivesDir;
+// ─────────────────────────────────────────────
+// Утилиты
+// ─────────────────────────────────────────────
+
+function writeJsonSync(filePath: string, data: unknown): void {
+  const dir = path.dirname(filePath);
+  fs.mkdirSync(dir, { recursive: true });
+  const tmp = filePath + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf-8');
+  fs.renameSync(tmp, filePath);
 }
 
-/**
- * Загрузка списка сетей
- */
-export async function loadNetworks(): Promise<NetworkConfig[]> {
-  const db = getDb();
-  const rows = db.prepare(`
-    SELECT id, name, description, color FROM networks ORDER BY id
-  `).all() as Array<{ id: string; name: string; description: string; color: string }>;
-  
-  return rows.map(row => ({
-    id: row.id,
-    name: row.name,
-    description: row.description || '',
-    color: row.color || '#3B82F6',
-  }));
-}
+// ─────────────────────────────────────────────
+// Дефолтные сети
+// ─────────────────────────────────────────────
 
-/**
- * Сохранение списка сетей (полная замена)
- */
-export async function saveNetworks(networks: NetworkConfig[]): Promise<void> {
-  const db = getDb();
-  
-  db.transaction(() => {
-    db.prepare('DELETE FROM networks').run();
-    
-    const insert = db.prepare(`
-      INSERT INTO networks (id, name, description, color) VALUES (?, ?, ?, ?)
-    `);
-    
-    for (const network of networks) {
-      insert.run(network.id, network.name, network.description || '', network.color || '#3B82F6');
+function getDefaultNetworks(): NetworkConfig[] {
+  const defaultsPath = path.join(config.dataDir, '..', 'defaults', 'networks.json');
+  try {
+    if (fs.existsSync(defaultsPath)) {
+      const data = JSON.parse(fs.readFileSync(defaultsPath, 'utf-8'));
+      if (data.networks && Array.isArray(data.networks)) {
+        return data.networks as NetworkConfig[];
+      }
     }
-  })();
+  } catch {
+    // игнорируем ошибку чтения
+  }
+  return [
+    {
+      id: 'default',
+      name: 'Основная корп. сеть',
+      description: 'Главная корпоративная сеть',
+      color: '#3B82F6',
+    },
+  ];
 }
 
-/**
- * Добавление новой сети
- * Сети - это просто метки для отслеживания переносов.
- * Папки frozen и diff_archives общие для всех сетей.
- */
-export async function addNetwork(network: Omit<NetworkConfig, 'id'>): Promise<NetworkConfig> {
-  const db = getDb();
-  
-  // Генерируем уникальный ID
+// ─────────────────────────────────────────────
+// CRUD для сетей
+// ─────────────────────────────────────────────
+
+export async function loadNetworks(): Promise<NetworkConfig[]> {
+  const filePath = networksFilePath();
+  try {
+    const raw = await fsp.readFile(filePath, 'utf-8');
+    const data = JSON.parse(raw);
+    if (data.networks && Array.isArray(data.networks)) {
+      return data.networks as NetworkConfig[];
+    }
+  } catch {
+    // файл не существует — используем дефолтные
+  }
+
+  const defaults = getDefaultNetworks();
+  writeJsonSync(filePath, { networks: defaults });
+  return defaults;
+}
+
+export async function saveNetworks(networks: NetworkConfig[]): Promise<void> {
+  writeJsonSync(networksFilePath(), { networks });
+}
+
+export async function addNetwork(
+  network: Omit<NetworkConfig, 'id'>
+): Promise<NetworkConfig> {
+  const networks = await loadNetworks();
   const id = `network_${Date.now()}`;
-  
-  db.prepare(`
-    INSERT INTO networks (id, name, description, color) VALUES (?, ?, ?, ?)
-  `).run(id, network.name, network.description || '', network.color || '#3B82F6');
-  
-  return { ...network, id };
-}
-
-/**
- * Обновление сети
- */
-export async function updateNetwork(id: string, updates: Partial<NetworkConfig>): Promise<boolean> {
-  const db = getDb();
-  
-  const setClauses: string[] = [];
-  const values: (string | undefined)[] = [];
-  
-  if (updates.name !== undefined) {
-    setClauses.push('name = ?');
-    values.push(updates.name);
-  }
-  if (updates.description !== undefined) {
-    setClauses.push('description = ?');
-    values.push(updates.description);
-  }
-  if (updates.color !== undefined) {
-    setClauses.push('color = ?');
-    values.push(updates.color);
-  }
-  
-  if (setClauses.length === 0) {
-    return false;
-  }
-  
-  values.push(id);
-  const result = db.prepare(`
-    UPDATE networks SET ${setClauses.join(', ')} WHERE id = ?
-  `).run(...values);
-  
-  return result.changes > 0;
-}
-
-/**
- * Удаление сети
- */
-export async function deleteNetwork(id: string): Promise<boolean> {
-  if (id === 'default') {
-    return false; // Нельзя удалить дефолтную сеть
-  }
-  
-  const db = getDb();
-  const result = db.prepare('DELETE FROM networks WHERE id = ?').run(id);
-  
-  return result.changes > 0;
-}
-
-/**
- * Получение сети по ID
- */
-export async function getNetwork(id: string): Promise<NetworkConfig | null> {
-  const db = getDb();
-  const row = db.prepare(`
-    SELECT id, name, description, color FROM networks WHERE id = ?
-  `).get(id) as { id: string; name: string; description: string; color: string } | undefined;
-  
-  if (!row) return null;
-  
-  return {
-    id: row.id,
-    name: row.name,
-    description: row.description || '',
-    color: row.color || '#3B82F6',
+  const newNetwork: NetworkConfig = {
+    id,
+    name: network.name,
+    description: network.description || '',
+    color: network.color || '#3B82F6',
   };
+  networks.push(newNetwork);
+  await saveNetworks(networks);
+  return newNetwork;
 }
 
-// ==================== Network States ====================
+export async function updateNetwork(
+  id: string,
+  updates: Partial<NetworkConfig>
+): Promise<boolean> {
+  const networks = await loadNetworks();
+  const idx = networks.findIndex(n => n.id === id);
+  if (idx === -1) return false;
+  networks[idx] = { ...networks[idx], ...updates, id };
+  await saveNetworks(networks);
+  return true;
+}
 
-/**
- * Загрузка состояний сетей
- */
+export async function deleteNetwork(id: string): Promise<boolean> {
+  if (id === 'default') return false;
+  const networks = await loadNetworks();
+  const filtered = networks.filter(n => n.id !== id);
+  if (filtered.length === networks.length) return false;
+  await saveNetworks(filtered);
+  return true;
+}
+
+export async function getNetwork(id: string): Promise<NetworkConfig | null> {
+  const networks = await loadNetworks();
+  return networks.find(n => n.id === id) ?? null;
+}
+
+// ─────────────────────────────────────────────
+// NetworkState — заглушки (frozen больше не используется)
+// ─────────────────────────────────────────────
+
 export async function loadNetworkStates(): Promise<Record<string, NetworkState>> {
-  const db = getDb();
-  const rows = db.prepare(`
-    SELECT network_id, last_sync_at, last_diff_id, packages_count, total_size 
-    FROM network_states
-  `).all() as Array<{
-    network_id: string;
-    last_sync_at: string | null;
-    last_diff_id: string | null;
-    packages_count: number;
-    total_size: number;
-  }>;
-  
+  const networks = await loadNetworks();
   const states: Record<string, NetworkState> = {};
-  for (const row of rows) {
-    states[row.network_id] = {
-      networkId: row.network_id,
-      lastSyncAt: row.last_sync_at,
-      lastDiffId: row.last_diff_id,
-      packagesCount: row.packages_count,
-      totalSize: row.total_size,
-    };
-  }
-  return states;
-}
-
-/**
- * Получение состояния конкретной сети
- */
-export async function getNetworkState(networkId: string): Promise<NetworkState> {
-  const db = getDb();
-  const row = db.prepare(`
-    SELECT network_id, last_sync_at, last_diff_id, packages_count, total_size 
-    FROM network_states WHERE network_id = ?
-  `).get(networkId) as {
-    network_id: string;
-    last_sync_at: string | null;
-    last_diff_id: string | null;
-    packages_count: number;
-    total_size: number;
-  } | undefined;
-  
-  if (!row) {
-    return {
-      networkId,
+  for (const n of networks) {
+    states[n.id] = {
+      networkId: n.id,
       lastSyncAt: null,
       lastDiffId: null,
       packagesCount: 0,
       totalSize: 0,
     };
   }
-  
+  return states;
+}
+
+export async function getNetworkState(networkId: string): Promise<NetworkState> {
   return {
-    networkId: row.network_id,
-    lastSyncAt: row.last_sync_at,
-    lastDiffId: row.last_diff_id,
-    packagesCount: row.packages_count,
-    totalSize: row.total_size,
+    networkId,
+    lastSyncAt: null,
+    lastDiffId: null,
+    packagesCount: 0,
+    totalSize: 0,
   };
 }
 
 /**
- * Обновление состояния сети после синхронизации
+ * Путь к общей директории diff_archives.
  */
-export async function updateNetworkState(
-  networkId: string,
-  diffId: string,
-  packagesCount: number,
-  totalSize: number
-): Promise<void> {
-  const db = getDb();
-  
-  db.prepare(`
-    INSERT OR REPLACE INTO network_states (network_id, last_sync_at, last_diff_id, packages_count, total_size)
-    VALUES (?, datetime('now'), ?, ?, ?)
-  `).run(networkId, diffId, packagesCount, totalSize);
+export function getNetworkDiffArchivesDir(_networkId: string): string {
+  return config.diffArchivesDir;
 }
 
 /**
- * Инициализация директорий для всех сетей
+ * @deprecated frozen директории больше не используются.
+ * Для совместимости возвращает diffArchivesDir.
+ */
+export function getNetworkFrozenDir(_networkId: string): string {
+  return config.diffArchivesDir;
+}
+
+/**
+ * @deprecated Больше не нужна — frozen не используется.
  */
 export async function initializeNetworkDirectories(): Promise<void> {
-  const networks = await loadNetworks();
-  
-  for (const network of networks) {
-    fs.mkdirSync(getNetworkFrozenDir(network.id), { recursive: true });
-    fs.mkdirSync(getNetworkDiffArchivesDir(network.id), { recursive: true });
-  }
+  // noop
 }
