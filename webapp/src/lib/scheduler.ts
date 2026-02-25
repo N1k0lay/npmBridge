@@ -1,8 +1,8 @@
-import { indexPackages, refreshStorageStats } from './storage';
-import { getMetadata, setMetadata } from './db';
+import { refreshStorageStats } from './storage';
 
 let schedulerInterval: NodeJS.Timeout | null = null;
 let watcherActive = false;
+let lastIndexedAt: number | null = null;
 
 // Интервал переиндексации (по умолчанию 30 минут)
 const REINDEX_INTERVAL_MS = parseInt(process.env.REINDEX_INTERVAL_MS || '1800000', 10);
@@ -14,16 +14,8 @@ const MIN_REINDEX_INTERVAL_MS = 5 * 60 * 1000;
  * Проверка, нужна ли переиндексация
  */
 function shouldReindex(): boolean {
-  const lastIndexedAt = getMetadata('last_indexed_at');
-  
-  if (!lastIndexedAt) {
-    return true;
-  }
-  
-  const lastIndexedTime = new Date(lastIndexedAt).getTime();
-  const now = Date.now();
-  
-  return (now - lastIndexedTime) > MIN_REINDEX_INTERVAL_MS;
+  if (!lastIndexedAt) return true;
+  return (Date.now() - lastIndexedAt) > MIN_REINDEX_INTERVAL_MS;
 }
 
 /**
@@ -40,17 +32,13 @@ async function performReindex(): Promise<void> {
   try {
     const startTime = Date.now();
     
-    // Индексируем пакеты
-    await indexPackages();
-    
-    // Обновляем статистику
+    // Обновляем статистику хранилища
     await refreshStorageStats();
     
-    // Сохраняем время последней индексации
-    setMetadata('last_indexed_at', new Date().toISOString());
+    lastIndexedAt = Date.now();
     
     const duration = ((Date.now() - startTime) / 1000).toFixed(2);
-    console.log(`[Scheduler] Reindex completed in ${duration}s`);
+    console.log(`[Scheduler] Stats refreshed in ${duration}s`);
   } catch (error) {
     console.error('[Scheduler] Reindex failed:', error);
   }
@@ -116,18 +104,18 @@ export function getSchedulerInfo(): {
   lastIndexedAt: string | null;
   nextIndexAt: string | null;
 } {
-  const lastIndexedAt = getMetadata('last_indexed_at');
+  const lastAt = lastIndexedAt ? new Date(lastIndexedAt).toISOString() : null;
   let nextIndexAt: string | null = null;
   
   if (lastIndexedAt && watcherActive) {
-    const nextTime = new Date(lastIndexedAt).getTime() + REINDEX_INTERVAL_MS;
+    const nextTime = lastIndexedAt + REINDEX_INTERVAL_MS;
     nextIndexAt = new Date(nextTime).toISOString();
   }
   
   return {
     running: watcherActive,
     intervalMs: REINDEX_INTERVAL_MS,
-    lastIndexedAt,
+    lastIndexedAt: lastAt,
     nextIndexAt,
   };
 }

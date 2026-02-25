@@ -1,5 +1,5 @@
 PROD_HOST   = npm@repo.dmn.zbr
-PROD_DIR    = /home/npm/npmBridge
+PROD_DIR    = /opt/npmBridge
 
 .PHONY: help deploy build restart logs status ssh \
         rollback stop start

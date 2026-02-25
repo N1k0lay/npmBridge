@@ -48,7 +48,7 @@ export interface DiffRecord {
 
 export interface UpdateRecord {
   id: string;
-  type: 'full' | 'recent';
+  type: 'full' | 'recent' | 'single';
   startedAt: string;
   finishedAt: string | null;
   status: 'running' | 'completed' | 'failed' | 'completed_with_errors';

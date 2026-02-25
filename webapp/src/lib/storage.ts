@@ -1,10 +1,10 @@
 import fs from 'fs/promises';
-import fsSync from 'fs';
 import { existsSync } from 'fs';
 import path from 'path';
-import type { Statement } from 'better-sqlite3';
 import { config } from './scripts';
-import { getDb } from './db';
+
+// Кэш статистики в памяти
+let _statsCache: StorageStats | null = null;
 
 export interface PackageVersion {
   version: string;
@@ -269,33 +269,10 @@ export async function getScopes(): Promise<string[]> {
  * Получение статистики из кэша или пересчёт
  */
 export async function getStorageStats(): Promise<StorageStats> {
-  const db = getDb();
-  
-  // Пытаемся получить из кэша
-  const cached = db.prepare(`
-    SELECT total_packages, total_versions, total_size, updated_at 
-    FROM storage_stats_cache 
-    WHERE id = 1
-  `).get() as { total_packages: number; total_versions: number; total_size: number; updated_at: string } | undefined;
-  
-  if (cached) {
-    return {
-      totalPackages: cached.total_packages,
-      totalVersions: cached.total_versions,
-      totalSize: cached.total_size,
-      totalSizeHuman: formatSize(cached.total_size),
-    };
-  }
-  
-  // Кэша нет — запускаем пересчёт в фоне и возвращаем нули
+  if (_statsCache) return _statsCache;
+  // Кэша нет — запускаем пересчёт в фоне и возвращаем нулевые значения
   refreshStorageStats().catch(console.error);
-  
-  return {
-    totalPackages: 0,
-    totalVersions: 0,
-    totalSize: 0,
-    totalSizeHuman: '0 B',
-  };
+  return { totalPackages: 0, totalVersions: 0, totalSize: 0, totalSizeHuman: '0 B' };
 }
 
 /**
@@ -306,7 +283,7 @@ export async function refreshStorageStats(): Promise<StorageStats> {
   
   if (!existsSync(storagePath)) {
     const stats = { totalPackages: 0, totalVersions: 0, totalSize: 0, totalSizeHuman: '0 B' };
-    saveStatsToCache(stats);
+    _statsCache = stats;
     return stats;
   }
   
@@ -347,27 +324,13 @@ export async function refreshStorageStats(): Promise<StorageStats> {
     totalSizeHuman: formatSize(totalSize),
   };
   
-  saveStatsToCache(stats);
+  _statsCache = stats;
   return stats;
 }
 
-/**
- * Сохранение статистики в кэш
- */
-function saveStatsToCache(stats: StorageStats): void {
-  const db = getDb();
-  db.prepare(`
-    INSERT OR REPLACE INTO storage_stats_cache (id, total_packages, total_versions, total_size, updated_at)
-    VALUES (1, ?, ?, ?, datetime('now'))
-  `).run(stats.totalPackages, stats.totalVersions, stats.totalSize);
-}
-
-/**
- * Инвалидация кэша статистики
- */
+/** @deprecated Нет SQLite, нооп для совместимости */
 export function invalidateStatsCache(): void {
-  const db = getDb();
-  db.prepare('DELETE FROM storage_stats_cache WHERE id = 1').run();
+  _statsCache = null;
 }
 
 /**
@@ -384,254 +347,34 @@ export interface IndexingStatus {
 }
 
 /**
- * Получение статуса индексации
+ * Статус индексации (заглушка — SQLite удалён)
  */
 export function getIndexingStatus(): IndexingStatus {
-  const db = getDb();
-  
-  const row = db.prepare(`
-    SELECT is_indexing, started_at, finished_at, packages_indexed, packages_total, last_error, stats_updated_at
-    FROM indexing_status WHERE id = 1
-  `).get() as {
-    is_indexing: number;
-    started_at: string | null;
-    finished_at: string | null;
-    packages_indexed: number;
-    packages_total: number;
-    last_error: string | null;
-    stats_updated_at: string | null;
-  } | undefined;
-  
-  if (!row) {
-    return {
-      isIndexing: false,
-      startedAt: null,
-      finishedAt: null,
-      packagesIndexed: 0,
-      packagesTotal: 0,
-      lastError: null,
-      statsUpdatedAt: null,
-    };
-  }
-  
   return {
-    isIndexing: row.is_indexing === 1,
-    startedAt: row.started_at,
-    finishedAt: row.finished_at,
-    packagesIndexed: row.packages_indexed,
-    packagesTotal: row.packages_total,
-    lastError: row.last_error,
-    statsUpdatedAt: row.stats_updated_at,
+    isIndexing: false,
+    startedAt: null,
+    finishedAt: null,
+    packagesIndexed: 0,
+    packagesTotal: 0,
+    lastError: null,
+    statsUpdatedAt: null,
   };
 }
 
-/**
- * Обновление статуса индексации
- */
-function updateIndexingStatus(status: Partial<IndexingStatus>): void {
-  const db = getDb();
-  
-  // Убедимся, что запись существует
-  db.prepare(`
-    INSERT OR IGNORE INTO indexing_status (id, is_indexing, packages_indexed, packages_total)
-    VALUES (1, 0, 0, 0)
-  `).run();
-  
-  const updates: string[] = [];
-  const values: (string | number | null)[] = [];
-  
-  if (status.isIndexing !== undefined) {
-    updates.push('is_indexing = ?');
-    values.push(status.isIndexing ? 1 : 0);
-  }
-  if (status.startedAt !== undefined) {
-    updates.push('started_at = ?');
-    values.push(status.startedAt);
-  }
-  if (status.finishedAt !== undefined) {
-    updates.push('finished_at = ?');
-    values.push(status.finishedAt);
-  }
-  if (status.packagesIndexed !== undefined) {
-    updates.push('packages_indexed = ?');
-    values.push(status.packagesIndexed);
-  }
-  if (status.packagesTotal !== undefined) {
-    updates.push('packages_total = ?');
-    values.push(status.packagesTotal);
-  }
-  if (status.lastError !== undefined) {
-    updates.push('last_error = ?');
-    values.push(status.lastError);
-  }
-  if (status.statsUpdatedAt !== undefined) {
-    updates.push('stats_updated_at = ?');
-    values.push(status.statsUpdatedAt);
-  }
-  
-  if (updates.length > 0) {
-    db.prepare(`UPDATE indexing_status SET ${updates.join(', ')} WHERE id = 1`).run(...values);
-  }
-}
-
-/**
- * Индексация пакетов в БД для быстрого поиска
- */
-export async function indexPackages(): Promise<void> {
-  const storagePath = config.storageDir;
-  const db = getDb();
-  
-  if (!existsSync(storagePath)) {
-    return;
-  }
-  
-  // Отмечаем начало индексации
-  const packages = await getPackages();
-  
-  updateIndexingStatus({
-    isIndexing: true,
-    startedAt: new Date().toISOString(),
-    finishedAt: null,
-    packagesIndexed: 0,
-    packagesTotal: packages.length,
-    lastError: null,
-  });
-  
-  try {
-    const insertStmt = db.prepare(`
-      INSERT OR REPLACE INTO packages_index 
-      (name, scope, is_scoped, latest_version, versions_count, total_size, last_updated, package_json, indexed_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-    `);
-    
-    const batchSize = 50;
-    for (let i = 0; i < packages.length; i += batchSize) {
-      const batch = packages.slice(i, i + batchSize);
-      
-      const transaction = db.transaction(() => {
-        for (const pkg of batch) {
-          indexSinglePackage(pkg, storagePath, insertStmt);
-        }
-      });
-      
-      transaction();
-      
-      // Обновляем прогресс
-      updateIndexingStatus({
-        packagesIndexed: Math.min(i + batchSize, packages.length),
-      });
-      
-      // Небольшая пауза между батчами
-      await new Promise(resolve => setTimeout(resolve, 10));
-    }
-    
-    // Индексация завершена успешно
-    updateIndexingStatus({
-      isIndexing: false,
-      finishedAt: new Date().toISOString(),
-      packagesIndexed: packages.length,
-      statsUpdatedAt: new Date().toISOString(),
-    });
-  } catch (error) {
-    // Ошибка индексации
-    updateIndexingStatus({
-      isIndexing: false,
-      finishedAt: new Date().toISOString(),
-      lastError: error instanceof Error ? error.message : String(error),
-    });
-    throw error;
-  }
-}
-
-/**
- * Индексация одного пакета
- */
-function indexSinglePackage(
-  packageName: string, 
-  storagePath: string, 
-  insertStmt: Statement<[string, string | null, number, string | null, number, number, string | null, string | null]>
-): void {
-  const packagePath = path.join(storagePath, packageName);
-  
-  if (!existsSync(packagePath)) {
-    return;
-  }
-  
-  const isScoped = packageName.startsWith('@');
-  const scope = isScoped ? packageName.split('/')[0] : null;
-  
-  let latestVersion: string | null = null;
-  let versionsCount = 0;
-  let totalSize = 0;
-  let lastUpdated: string | null = null;
-  let packageJson: string | null = null;
-  
-  // Читаем package.json синхронно (для транзакции)
-  const packageJsonPath = path.join(packagePath, 'package.json');
-  if (existsSync(packageJsonPath)) {
-    try {
-      const content = fsSync.readFileSync(packageJsonPath, 'utf-8');
-      const parsed = JSON.parse(content);
-      packageJson = content;
-      latestVersion = parsed['dist-tags']?.latest || null;
-    } catch {
-      // Игнорируем
-    }
-  }
-  
-  // Считаем версии и размер синхронно
-  try {
-    const entries = fsSync.readdirSync(packagePath, { withFileTypes: true });
-    
-    for (const entry of entries) {
-      if (entry.isFile() && entry.name.endsWith('.tgz')) {
-        versionsCount++;
-        const stats = fsSync.statSync(path.join(packagePath, entry.name));
-        totalSize += stats.size;
-        
-        if (!lastUpdated || stats.mtime.toISOString() > lastUpdated) {
-          lastUpdated = stats.mtime.toISOString();
-        }
-      }
-    }
-  } catch {
-    // Игнорируем
-  }
-  
-  insertStmt.run(
-    packageName,
-    scope,
-    isScoped ? 1 : 0,
-    latestVersion,
-    versionsCount,
-    totalSize,
-    lastUpdated,
-    packageJson
-  );
-}
+/** @deprecated Индексация удалена */
+export async function indexPackages(): Promise<void> { /* noop */ }
 
 /**
  * Умный поиск с сортировкой по релевантности
  */
 export async function searchPackages(options: SearchOptions): Promise<PaginatedResult<PackageSearchResult>> {
-  const { query, page = 1, limit = 30, sortBy = 'relevance' } = options;
-  const db = getDb();
+  const { query, page = 1, limit = 30 } = options;
   const lowerQuery = query.toLowerCase();
-  
-  // Сначала пробуем из индекса
-  const indexCount = db.prepare('SELECT COUNT(*) as count FROM packages_index').get() as { count: number };
-  
-  if (indexCount.count > 0) {
-    return searchFromIndex(lowerQuery, page, limit, sortBy);
-  }
-  
-  // Фолбэк на файловую систему
+
   const allPackages = await getPackages();
   const filtered = allPackages.filter(pkg => pkg.toLowerCase().includes(lowerQuery));
-  
-  // Сортируем по релевантности
   const sorted = sortByRelevance(filtered, lowerQuery);
-  
+
   const offset = (page - 1) * limit;
   const items = sorted.slice(offset, offset + limit).map(name => ({
     name,
@@ -639,98 +382,8 @@ export async function searchPackages(options: SearchOptions): Promise<PaginatedR
     scope: name.startsWith('@') ? name.split('/')[0] : undefined,
     versionsCount: 0,
   }));
-  
-  return {
-    items,
-    total: filtered.length,
-    page,
-    limit,
-    hasMore: offset + limit < filtered.length,
-  };
-}
 
-/**
- * Поиск из индекса БД
- */
-function searchFromIndex(
-  query: string, 
-  page: number, 
-  limit: number, 
-  sortBy: string
-): PaginatedResult<PackageSearchResult> {
-  const db = getDb();
-  const offset = (page - 1) * limit;
-  
-  // Сначала считаем общее количество
-  const countResult = db.prepare(`
-    SELECT COUNT(*) as count FROM packages_index 
-    WHERE LOWER(name) LIKE ?
-  `).get(`%${query}%`) as { count: number };
-  
-  // Получаем результаты с сортировкой
-  let orderBy = 'name ASC';
-  if (sortBy === 'updated') {
-    orderBy = 'last_updated DESC';
-  } else if (sortBy === 'relevance') {
-    // Сортировка: сначала простые пакеты, потом scoped, по длине имени
-    // Для scoped пакетов учитываем часть после /
-    orderBy = `
-      is_scoped ASC,
-      CASE 
-        WHEN LOWER(name) = '${query}' THEN 0
-        WHEN is_scoped = 0 AND LOWER(name) LIKE '${query}%' THEN 1
-        WHEN is_scoped = 1 AND LOWER(SUBSTR(name, INSTR(name, '/') + 1)) = '${query}' THEN 1
-        WHEN is_scoped = 1 AND LOWER(SUBSTR(name, INSTR(name, '/') + 1)) LIKE '${query}%' THEN 2
-        ELSE 3
-      END,
-      LENGTH(name) ASC,
-      name ASC
-    `;
-  }
-  
-  const rows = db.prepare(`
-    SELECT name, scope, is_scoped, latest_version, versions_count, package_json
-    FROM packages_index 
-    WHERE LOWER(name) LIKE ?
-    ORDER BY ${orderBy}
-    LIMIT ? OFFSET ?
-  `).all(`%${query}%`, limit, offset) as Array<{
-    name: string;
-    scope: string | null;
-    is_scoped: number;
-    latest_version: string | null;
-    versions_count: number;
-    package_json: string | null;
-  }>;
-  
-  const items: PackageSearchResult[] = rows.map(row => {
-    let description: string | undefined;
-    if (row.package_json) {
-      try {
-        const parsed = JSON.parse(row.package_json);
-        description = parsed.description;
-      } catch {
-        // ignore
-      }
-    }
-    
-    return {
-      name: row.name,
-      scope: row.scope || undefined,
-      isScoped: row.is_scoped === 1,
-      latestVersion: row.latest_version || undefined,
-      versionsCount: row.versions_count,
-      description,
-    };
-  });
-  
-  return {
-    items,
-    total: countResult.count,
-    page,
-    limit,
-    hasMore: offset + limit < countResult.count,
-  };
+  return { items, total: filtered.length, page, limit, hasMore: offset + limit < filtered.length };
 }
 
 /**
@@ -772,69 +425,11 @@ function sortByRelevance(packages: string[], query: string): string[] {
  * Подсказки для автокомплита
  */
 export async function getSuggestions(query: string, limit: number = 10): Promise<PackageSearchResult[]> {
-  if (!query || query.length < 2) {
-    return [];
-  }
-  
-  const db = getDb();
+  if (!query || query.length < 2) return [];
   const lowerQuery = query.toLowerCase();
-  
-  // Пробуем из индекса
-  const indexCount = db.prepare('SELECT COUNT(*) as count FROM packages_index').get() as { count: number };
-  
-  if (indexCount.count > 0) {
-    // Из индекса с умной сортировкой
-    // Для scoped пакетов нужно также проверять часть после /
-    const rows = db.prepare(`
-      SELECT name, scope, is_scoped, latest_version, versions_count, package_json
-      FROM packages_index 
-      WHERE LOWER(name) LIKE ?
-      ORDER BY
-        is_scoped ASC,
-        CASE 
-          WHEN LOWER(name) = ? THEN 0
-          WHEN is_scoped = 0 AND LOWER(name) LIKE ? THEN 1
-          WHEN is_scoped = 1 AND LOWER(SUBSTR(name, INSTR(name, '/') + 1)) = ? THEN 1
-          WHEN is_scoped = 1 AND LOWER(SUBSTR(name, INSTR(name, '/') + 1)) LIKE ? THEN 2
-          ELSE 3
-        END,
-        LENGTH(name) ASC,
-        name ASC
-      LIMIT ?
-    `).all(`%${lowerQuery}%`, lowerQuery, `${lowerQuery}%`, lowerQuery, `${lowerQuery}%`, limit) as Array<{
-      name: string;
-      scope: string | null;
-      is_scoped: number;
-      latest_version: string | null;
-      versions_count: number;
-      package_json: string | null;
-    }>;
-    
-    return rows.map(row => {
-      let description: string | undefined;
-      if (row.package_json) {
-        try {
-          const parsed = JSON.parse(row.package_json);
-          description = parsed.description;
-        } catch { /* ignore */ }
-      }
-      
-      return {
-        name: row.name,
-        scope: row.scope || undefined,
-        isScoped: row.is_scoped === 1,
-        latestVersion: row.latest_version || undefined,
-        versionsCount: row.versions_count,
-        description,
-      };
-    });
-  }
-  
-  // Фолбэк на файловую систему
   const allPackages = await getPackages();
   const filtered = allPackages.filter(pkg => pkg.toLowerCase().includes(lowerQuery));
   const sorted = sortByRelevance(filtered, lowerQuery);
-  
   return sorted.slice(0, limit).map(name => ({
     name,
     isScoped: name.startsWith('@'),
