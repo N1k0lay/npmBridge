@@ -79,7 +79,7 @@ export function NetworksPanel({ onNetworksChange }: NetworksPanelProps) {
         const data = await res.json();
         alert(data.error || 'Ошибка добавления сети');
       }
-    } catch (error) {
+    } catch {
       alert('Ошибка сети');
     }
   };
@@ -110,7 +110,7 @@ export function NetworksPanel({ onNetworksChange }: NetworksPanelProps) {
         const data = await res.json();
         alert(data.error || 'Ошибка обновления сети');
       }
-    } catch (error) {
+    } catch {
       alert('Ошибка сети');
     }
   };
@@ -133,7 +133,7 @@ export function NetworksPanel({ onNetworksChange }: NetworksPanelProps) {
         const data = await res.json();
         alert(data.error || 'Ошибка удаления сети');
       }
-    } catch (error) {
+    } catch {
       alert('Ошибка сети');
     }
   };

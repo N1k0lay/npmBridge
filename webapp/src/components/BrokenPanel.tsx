@@ -59,7 +59,7 @@ export function BrokenPanel({ onRefresh }: BrokenPanelProps) {
       } else {
         alert(data.error || 'Ошибка запуска проверки');
       }
-    } catch (error) {
+    } catch {
       alert('Ошибка сети');
     } finally {
       setIsStarting(false);
@@ -83,7 +83,7 @@ export function BrokenPanel({ onRefresh }: BrokenPanelProps) {
       } else {
         alert(data.error || 'Ошибка запуска исправления');
       }
-    } catch (error) {
+    } catch {
       alert('Ошибка сети');
     } finally {
       setIsStarting(false);

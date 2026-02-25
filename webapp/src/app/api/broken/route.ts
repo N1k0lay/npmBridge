@@ -3,8 +3,7 @@ import {
   runScript, 
   getTaskProgress, 
   getTaskStatus, 
-  isTaskRunning,
-  config 
+  isTaskRunning 
 } from '@/lib/scripts';
 import { 
   addBrokenCheck, 
@@ -113,7 +112,6 @@ export async function POST(request: Request) {
     
     // Запускаем исправление
     runScript('fix_broken.py', taskId).then(async (result) => {
-      let fixed = 0;
       let failed = 0;
       
       try {
@@ -121,7 +119,6 @@ export async function POST(request: Request) {
         const lastLine = outputLines[outputLines.length - 1];
         if (lastLine) {
           const jsonResult = JSON.parse(lastLine);
-          fixed = jsonResult.fixed || 0;
           failed = jsonResult.failed || 0;
         }
       } catch {

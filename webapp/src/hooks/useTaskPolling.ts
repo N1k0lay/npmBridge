@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 
 interface TaskProgress {
   current: number;
@@ -28,12 +28,16 @@ interface UseTaskPollingOptions {
 export function useTaskPolling({
   taskId,
   endpoint,
-  interval = 1000,
+  interval = 3000,
   onComplete,
 }: UseTaskPollingOptions) {
   const [progress, setProgress] = useState<TaskProgress | null>(null);
   const [status, setStatus] = useState<TaskStatus | null>(null);
   const [isRunning, setIsRunning] = useState(false);
+  
+  // Используем ref для onComplete чтобы избежать пересоздания poll
+  const onCompleteRef = useRef(onComplete);
+  onCompleteRef.current = onComplete;
 
   const poll = useCallback(async () => {
     if (!taskId) return;
@@ -47,12 +51,12 @@ export function useTaskPolling({
       setIsRunning(data.running);
 
       if (!data.running && data.status) {
-        onComplete?.(data.status);
+        onCompleteRef.current?.(data.status);
       }
     } catch (error) {
       console.error('Polling error:', error);
     }
-  }, [taskId, endpoint, onComplete]);
+  }, [taskId, endpoint]);
 
   useEffect(() => {
     if (!taskId) {

@@ -1,13 +1,9 @@
 import { NextResponse } from 'next/server';
-import { existsSync } from 'fs';
-import fs from 'fs/promises';
-import path from 'path';
 import { 
   runScript, 
   getTaskProgress, 
   getTaskStatus, 
-  isTaskRunning,
-  config 
+  isTaskRunning 
 } from '@/lib/scripts';
 import { 
   addDiff, 
@@ -83,7 +79,7 @@ export async function GET(request: Request) {
 }
 
 // POST - создать новый diff
-export async function POST(request: Request) {
+export async function POST(_request: Request) {
   // Diff создаётся независимо от сетей
   // Сети - это просто метки для отслеживания, куда был перенесён diff
   

@@ -17,3 +17,80 @@ body {
     )
     rgb(var(--background-start-rgb));
 }
+
+/* Markdown prose styles */
+.prose {
+  line-height: 1.75;
+}
+
+.prose h1 {
+  @apply text-2xl font-bold mt-8 mb-4;
+}
+
+.prose h2 {
+  @apply text-xl font-semibold mt-6 mb-3;
+}
+
+.prose h3 {
+  @apply text-lg font-semibold mt-4 mb-2;
+}
+
+.prose h4, .prose h5, .prose h6 {
+  @apply font-semibold mt-4 mb-2;
+}
+
+.prose p {
+  @apply my-3;
+}
+
+.prose a {
+  @apply text-blue-600 hover:underline;
+}
+
+.prose code {
+  @apply bg-gray-100 px-1.5 py-0.5 rounded text-sm font-mono;
+}
+
+.prose pre {
+  @apply bg-gray-900 text-green-400 p-4 rounded-lg overflow-x-auto my-4;
+}
+
+.prose pre code {
+  @apply bg-transparent p-0 text-inherit;
+}
+
+.prose blockquote {
+  @apply border-l-4 border-gray-300 pl-4 italic text-gray-600 my-4;
+}
+
+.prose ul {
+  @apply list-disc list-inside my-3;
+}
+
+.prose ol {
+  @apply list-decimal list-inside my-3;
+}
+
+.prose li {
+  @apply my-1;
+}
+
+.prose table {
+  @apply w-full border-collapse my-4;
+}
+
+.prose th {
+  @apply border border-gray-300 px-3 py-2 bg-gray-50 text-left font-medium;
+}
+
+.prose td {
+  @apply border border-gray-300 px-3 py-2;
+}
+
+.prose hr {
+  @apply my-8 border-gray-200;
+}
+
+.prose img {
+  @apply max-w-full h-auto rounded my-4;
+}

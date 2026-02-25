@@ -13,15 +13,15 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const body = await request.json();
+  const body = await request.json() as { parallelJobs?: string | number; modifiedMinutes?: string | number };
   
   // Обновляем конфигурацию в runtime
   // Примечание: это изменит только runtime значения, не .env файл
   if (body.parallelJobs !== undefined) {
-    (config as any).parallelJobs = parseInt(body.parallelJobs, 10);
+    config.parallelJobs = parseInt(String(body.parallelJobs), 10);
   }
   if (body.modifiedMinutes !== undefined) {
-    (config as any).modifiedMinutes = parseInt(body.modifiedMinutes, 10);
+    config.modifiedMinutes = parseInt(String(body.modifiedMinutes), 10);
   }
   
   return NextResponse.json({

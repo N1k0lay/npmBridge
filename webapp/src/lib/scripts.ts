@@ -2,8 +2,22 @@ import { spawn, ChildProcess } from 'child_process';
 import path from 'path';
 import fs from 'fs/promises';
 
+// Интерфейс конфигурации
+export interface AppConfig {
+  readonly verdaccioHome: string;
+  readonly storageDir: string;
+  readonly frozenDir: string;
+  readonly diffArchivesDir: string;
+  readonly scriptsDir: string;
+  readonly dataDir: string;
+  readonly logsDir: string;
+  readonly pnpmCmd: string;
+  parallelJobs: number;
+  modifiedMinutes: number;
+}
+
 // Конфигурация из переменных окружения
-export const config = {
+export const config: AppConfig = {
   verdaccioHome: process.env.VERDACCIO_HOME || '/home/npm/verdaccio',
   storageDir: process.env.STORAGE_DIR || '/home/npm/verdaccio/storage',
   frozenDir: process.env.FROZEN_DIR || '/home/npm/verdaccio/frozen',
@@ -35,6 +49,7 @@ export interface TaskProgress {
   failed?: number;
   broken?: number;
   phase?: string;
+  errors?: Array<{ package: string; error: string }>;
   updatedAt: string;
 }
 
@@ -52,7 +67,8 @@ export interface TaskStatus {
 export async function runScript(
   scriptName: string,
   taskId: string,
-  extraEnv: Record<string, string> = {}
+  extraEnv: Record<string, string> = {},
+  args: string[] = []
 ): Promise<TaskResult> {
   const scriptPath = path.join(config.scriptsDir, scriptName);
   
@@ -80,7 +96,7 @@ export async function runScript(
   };
   
   return new Promise((resolve) => {
-    const proc = spawn('python3', [scriptPath], {
+    const proc = spawn('python3', [scriptPath, ...args], {
       env,
       cwd: config.verdaccioHome,
     });

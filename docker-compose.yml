@@ -2,18 +2,53 @@ version: '3.8'
 
 services:
   # ===========================================
+  # Nginx - Reverse Proxy
+  # ===========================================
+  nginx:
+    image: nginx:alpine
+    container_name: npmBridge-nginx
+    ports:
+      - "${HTTP_PORT:-8013}:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - webapp
+      - verdaccio
+    restart: unless-stopped
+
+  # ===========================================
+  # Storage Init - исправление прав доступа
+  # ===========================================
+  storage-init:
+    image: alpine:latest
+    container_name: npmBridge-storage-init
+    volumes:
+      - ${STORAGE_DIR:-./storage}:/verdaccio/storage
+      - ./scripts/init-storage.sh:/init-storage.sh:ro
+    environment:
+      - STORAGE_DIR=/verdaccio/storage
+      - VERDACCIO_UID=10001
+      - VERDACCIO_GID=65533
+    command: ["/bin/sh", "/init-storage.sh"]
+    restart: "no"
+
+  # ===========================================
   # Verdaccio - NPM Registry Proxy/Cache
   # ===========================================
   verdaccio:
     image: verdaccio/verdaccio:latest
-    container_name: npm-hub-verdaccio
-    ports:
-      - "${VERDACCIO_PORT:-4873}:4873"
+    container_name: npmBridge-verdaccio
+    # Порт не публикуем наружу - только через nginx
+    expose:
+      - "4873"
     volumes:
       - ${STORAGE_DIR:-./storage}:/verdaccio/storage
       - ${VERDACCIO_CONF:-./verdaccio/conf}:/verdaccio/conf
     environment:
       - VERDACCIO_PORT=4873
+    depends_on:
+      storage-init:
+        condition: service_completed_successfully
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:4873/-/ping"]
@@ -29,26 +64,30 @@ services:
       context: ./webapp
       dockerfile: Dockerfile
     container_name: npmBridge-webapp
-    ports:
-      - "${WEBAPP_PORT:-4013}:3000"
+    # Порт не публикуем наружу - только через nginx
+    expose:
+      - "3000"
     volumes:
       # Монтируем storage для чтения/записи
-      - ${STORAGE_DIR:-./storage}:/app/storage:ro
-      - ${FROZEN_DIR:-./frozen}:/app/frozen
-      - ${DIFF_ARCHIVES_DIR:-./diff_archives}:/app/diff_archives
+      - ${STORAGE_DIR:-/mnt/repo/npmBridge/storage}:/app/storage:ro
+      - ${PNPM_CACHE_DIR:-/mnt/repo/npmBridge/pnpm_cache}:/app/pnpm_cache
+      - ${FROZEN_DIR:-/mnt/repo/npmBridge/frozen}:/app/frozen
+      - ${DIFF_ARCHIVES_DIR:-/mnt/repo/npmBridge/diff_archives}:/app/diff_archives
       - ${SCRIPTS_DIR:-./scripts}:/app/scripts:ro
-      - ./webapp/data:/app/data
-      - ./webapp/logs:/app/logs
+      - /mnt/repo/npmBridge/data:/app/data
+      - /mnt/repo/npmBridge/logs:/app/logs
     environment:
       - NODE_ENV=production
       - VERDACCIO_HOME=/app
       - STORAGE_DIR=/app/storage
+      - PNPM_STORE_DIR=/app/pnpm_cache
       - FROZEN_DIR=/app/frozen
       - DIFF_ARCHIVES_DIR=/app/diff_archives
       - SCRIPTS_DIR=/app/scripts
       - DATA_DIR=/app/data
       - LOGS_DIR=/app/logs
       - PNPM_CMD=pnpm
+      - REGISTRY_URL=http://verdaccio:4873/
       - PARALLEL_JOBS=${PARALLEL_JOBS:-40}
       - MODIFIED_MINUTES=${MODIFIED_MINUTES:-2880}
     depends_on:
@@ -56,11 +95,6 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-volumes:
-  storage:
-  frozen:
-  diff_archives:
-
 networks:
   default:
-    name: npm-hub-network
+    name: npmBridge-network

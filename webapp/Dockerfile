@@ -26,21 +26,25 @@ FROM node:20-alpine AS runner
 
 WORKDIR /app
 
-# Install pnpm and python3 for scripts
+# Install pnpm, python3 for scripts, and build tools for native modules
 RUN corepack enable && corepack prepare pnpm@latest --activate \
-    && apk add --no-cache python3 py3-pip
+    && apk add --no-cache python3 py3-pip make g++ \
+    && npm install -g typesync
 
 ENV NODE_ENV=production
 
 # Copy built application
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
-COPY --from=builder /app/public ./public
 
-# Copy better-sqlite3 native module
-COPY --from=builder /app/node_modules/better-sqlite3 ./node_modules/better-sqlite3
-COPY --from=builder /app/node_modules/bindings ./node_modules/bindings
-COPY --from=builder /app/node_modules/file-uri-to-path ./node_modules/file-uri-to-path
+# Create public directory (Next.js requires it even if empty)
+RUN mkdir -p ./public
+
+# Copy package.json for better-sqlite3 installation
+COPY --from=builder /app/package.json ./package.json
+
+# Install better-sqlite3 with native rebuild for Alpine
+RUN pnpm add better-sqlite3 --ignore-scripts=false
 
 # Copy defaults
 COPY --from=builder /app/defaults ./defaults

@@ -82,7 +82,7 @@ export function DiffPanel({ onRefresh }: DiffPanelProps) {
       } else {
         alert(data.error || 'Ошибка создания diff');
       }
-    } catch (error) {
+    } catch {
       alert('Ошибка сети');
     } finally {
       setIsCreating(false);
@@ -123,7 +123,7 @@ export function DiffPanel({ onRefresh }: DiffPanelProps) {
         const data = await res.json();
         alert(data.error || 'Ошибка подтверждения');
       }
-    } catch (error) {
+    } catch {
       alert('Ошибка сети');
     } finally {
       setConfirmingNetwork(null);
