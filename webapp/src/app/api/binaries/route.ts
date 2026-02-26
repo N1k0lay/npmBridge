@@ -85,6 +85,7 @@ function annotate(nodes: TreeNode[]): TreeNode[] {
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const taskId = searchParams.get('taskId');
+  const skipTree = searchParams.get('skipTree') === '1';
 
   // ── Polling режим ──────────────────────────────────────────────────────────
   if (taskId) {
@@ -102,10 +103,16 @@ export async function GET(request: Request) {
     });
   }
 
-  // ── Обычный GET: дерево + метаданные + список доступных пакетов ──────────
+  // ── Обычный GET: метаданные + список доступных пакетов (+ опционально дерево) ──
   try {
-    const tree = await buildTree(BINARIES_DIR);
-    const annotatedTree = annotate(tree);
+    let annotatedTree: TreeNode[] = [];
+    let totalSize = 0;
+
+    if (!skipTree) {
+      const tree = await buildTree(BINARIES_DIR);
+      annotatedTree = annotate(tree);
+      totalSize = calcDirSize(tree);
+    }
 
     let metadata: Record<string, unknown> = {};
     try {
@@ -128,7 +135,7 @@ export async function GET(request: Request) {
     return NextResponse.json({
       path: BINARIES_DIR,
       tree: annotatedTree,
-      totalSize: calcDirSize(tree),
+      totalSize,
       metadata,
       availablePackages,
     });
