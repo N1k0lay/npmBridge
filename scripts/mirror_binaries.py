@@ -245,25 +245,40 @@ def _playwright_browser_filename(browser: str, arch: str) -> str | None:
 
 
 def _playwright_revisions(ver: str) -> dict[str, str | None]:
-    temp_dir = install_pkg_get_path(f'playwright-core@{ver}')
-    if not temp_dir:
+    """
+    Читает ревизии браузеров прямо из browsers.json внутри tgz-архива.
+    Не требует pnpm install — быстро и надёжно.
+    """
+    tgz = get_latest_tgz('playwright-core') or get_latest_tgz('playwright')
+    if not tgz:
+        log('WARNING', f'  Не найден tgz playwright-core в storage')
         return {}
+
     try:
-        index_js = (temp_dir / 'node_modules' / 'playwright-core' /
-                    'lib' / 'server' / 'registry' / 'index.js')
-        if not index_js.exists():
-            log('WARNING', f'  index.js не найден в playwright-core@{ver}')
-            return {}
-        content = index_js.read_text('utf-8', errors='replace')
-        revisions: dict[str, str | None] = {}
-        for browser in PLAYWRIGHT_BROWSERS:
-            m = re.search(
-                rf'name:\s*["\']({re.escape(browser)})["\'].*?revision:\s*["\'](\d+)["\']',
-                content, re.DOTALL)
-            revisions[browser] = m.group(2) if m else None
-        return revisions
-    finally:
-        shutil.rmtree(temp_dir, ignore_errors=True)
+        with tarfile.open(tgz, 'r:gz') as tf:
+            # browsers.json лежит как package/browsers.json
+            member = next(
+                (m for m in tf.getmembers() if m.name.endswith('browsers.json')),
+                None,
+            )
+            if not member:
+                log('WARNING', f'  browsers.json не найден в {tgz.name}')
+                return {}
+            f = tf.extractfile(member)
+            if not f:
+                return {}
+            data = json.loads(f.read())
+    except Exception as e:
+        log('WARNING', f'  Ошибка чтения {tgz.name}: {e}')
+        return {}
+
+    revisions: dict[str, str | None] = {}
+    for browser in PLAYWRIGHT_BROWSERS:
+        entry = next((b for b in data.get('browsers', []) if b.get('name') == browser), None)
+        revisions[browser] = str(entry['revision']) if entry else None
+
+    log('INFO', f'  Ревизии из {tgz.name}: { {k: v for k, v in revisions.items() if v} }')
+    return revisions
 
 
 def _detect_playwright_version() -> str | None:
