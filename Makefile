@@ -29,6 +29,7 @@ deploy:
 		git pull && \
 		docker compose build webapp && \
 		docker compose up -d && \
+		docker compose restart nginx && \
 		docker compose logs webapp --tail=30"
 
 # ─────────────────────────────────────────────
