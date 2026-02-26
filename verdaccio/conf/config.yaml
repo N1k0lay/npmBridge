@@ -65,7 +65,20 @@ auth:
 # a list of other known repositories we can talk to
 uplinks:
   npmjs:
-    url: http://registry.npmjs.org/
+    url: https://registry.npmjs.org/
+    # Увеличиваем таймаут ожидания ответа от upstream (ms, 0 = без ограничений)
+    # Нужно для тяжёлых пакетов (prisma ~10MB метаданных через корпоративный прокси)
+    timeout: 120000
+    # Максимальное число сбоев подряд перед отключением uplink
+    max_fails: 10
+    # Время (сек) ожидания перед повторным включением uplink после сбоев
+    fail_timeout: 60s
+    # Кешировать метаданные пакетов на стороне verdaccio
+    maxage: 10m
+    # Число попыток при сетевых ошибках
+    fetch_retries: 3
+    fetch_retry_mintimeout: 10000
+    fetch_retry_maxtimeout: 60000
 
 # Learn how to protect your packages
 # https://verdaccio.org/docs/protect-your-dependencies/
@@ -167,7 +180,7 @@ listen:
 
 # https://verdaccio.org/docs/configuration#proxy
 http_proxy: http://dmitrievne:Veirtimd7991+@129.6.200.1:3128
-# https_proxy: https://something.local/
+https_proxy: http://dmitrievne:Veirtimd7991+@129.6.200.1:3128
 
 # https://verdaccio.org/docs/configuration#notifications
 # notify:
