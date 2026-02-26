@@ -28,7 +28,7 @@ deploy:
 	ssh $(PROD_HOST) "cd $(PROD_DIR) && \
 		git pull && \
 		docker compose build webapp && \
-		docker compose up -d webapp && \
+		docker compose up -d && \
 		docker compose logs webapp --tail=30"
 
 # ─────────────────────────────────────────────
@@ -41,10 +41,10 @@ restart:
 	ssh $(PROD_HOST) "cd $(PROD_DIR) && docker compose restart webapp"
 
 stop:
-	ssh $(PROD_HOST) "cd $(PROD_DIR) && docker compose stop webapp"
+	ssh $(PROD_HOST) "cd $(PROD_DIR) && docker compose down"
 
 start:
-	ssh $(PROD_HOST) "cd $(PROD_DIR) && docker compose up -d webapp"
+	ssh $(PROD_HOST) "cd $(PROD_DIR) && docker compose up -d"
 
 # ─────────────────────────────────────────────
 # Мониторинг
