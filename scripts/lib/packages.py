@@ -105,6 +105,7 @@ def install_types_from_package_json(temp_dir: str) -> tuple[int, int]:
         cmd = [
             PNPM_CMD, 'install',
             '--force',
+            '--ignore-scripts',
             f'--registry={REGISTRY_URL}'
         ]
         
@@ -173,10 +174,14 @@ def install_package(
     
     try:
         # Формируем команду pnpm install
+        # --ignore-scripts: не запускаем postinstall (playwright качает браузеры,
+        # native-модули компилируются и т.д.) — нам нужно только закешировать
+        # тарболы в verdaccio, а не реально устанавливать пакеты.
         cmd = [
             PNPM_CMD, 'install',
             package_spec,
             '--force',
+            '--ignore-scripts',
             f'--registry={REGISTRY_URL}'
         ]
         
