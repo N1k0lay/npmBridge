@@ -10,6 +10,16 @@ import {
 } from '@/lib/scripts';
 
 const BINARIES_DIR = process.env.BINARIES_DIR || '/app/binaries';
+const STORAGE_DIR   = process.env.STORAGE_DIR   || '/app/storage';
+
+// Известные пакеты, которые скачивают бинари в postinstall
+// key = id пакета (то что шлём в mirror_binaries.py --package)
+// npmNames = имена папок в verdaccio storage
+const KNOWN_BINARY_PACKAGES: Record<string, { npmNames: string[] }> = {
+  playwright: { npmNames: ['playwright-core', 'playwright'] },
+  electron:   { npmNames: ['electron'] },
+  puppeteer:  { npmNames: ['puppeteer-core', 'puppeteer'] },
+};
 
 // Название npm-пакета для команды обновления
 const UPDATE_PACKAGE_MAP: Record<string, string> = {
@@ -92,7 +102,7 @@ export async function GET(request: Request) {
     });
   }
 
-  // ── Обычный GET: дерево + метаданные ──────────────────────────────────────
+  // ── Обычный GET: дерево + метаданные + список доступных пакетов ──────────
   try {
     const tree = await buildTree(BINARIES_DIR);
     const annotatedTree = annotate(tree);
@@ -103,11 +113,24 @@ export async function GET(request: Request) {
       metadata = JSON.parse(raw);
     } catch { /* нет метаданных */ }
 
+    // Определяем, какие бинарные пакеты есть в storage
+    const availablePackages: string[] = [];
+    for (const [pkgId, { npmNames }] of Object.entries(KNOWN_BINARY_PACKAGES)) {
+      for (const name of npmNames) {
+        try {
+          await stat(join(STORAGE_DIR, name));
+          availablePackages.push(pkgId);
+          break; // нашли — переходим к следующему pkgId
+        } catch { /* нет в storage */ }
+      }
+    }
+
     return NextResponse.json({
       path: BINARIES_DIR,
       tree: annotatedTree,
       totalSize: calcDirSize(tree),
       metadata,
+      availablePackages,
     });
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });
