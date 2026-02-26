@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 
 
-interface TaskProgress {
+export interface TaskProgress {
   current: number;
   total: number;
   percent: number;
@@ -14,7 +14,7 @@ interface TaskProgress {
   phase?: string;
 }
 
-interface TaskStatus {
+export interface TaskStatus {
   status: string;
   message: string;
 }

@@ -109,10 +109,18 @@ export async function POST(request: Request) {
   // Проверяем, что нет запущенных обновлений
   const runningUpdate = await getRunningUpdate();
   if (runningUpdate) {
-    return NextResponse.json(
-      { error: 'Уже выполняется обновление', taskId: runningUpdate.id },
-      { status: 409 }
-    );
+    // Если процесс реально завершился, но БД не обновилась — авто-очистка
+    if (!isTaskRunning(runningUpdate.id)) {
+      await updateUpdateRecord(runningUpdate.id, {
+        finishedAt: new Date().toISOString(),
+        status: 'failed',
+      });
+    } else {
+      return NextResponse.json(
+        { error: 'Уже выполняется обновление', taskId: runningUpdate.id },
+        { status: 409 }
+      );
+    }
   }
   
   const taskId = `update_${type}_${Date.now()}`;

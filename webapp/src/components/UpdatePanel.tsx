@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { Play, Square, RefreshCw, Clock, Settings } from 'lucide-react';
-import { useTaskPolling } from '@/hooks/useTaskPolling';
+import { useTaskPolling, TaskProgress, TaskStatus } from '@/hooks/useTaskPolling';
 import { ProgressBar } from './ProgressBar';
 
 interface UpdatePanelProps {
@@ -15,6 +15,9 @@ export function UpdatePanel({ onUpdate }: UpdatePanelProps) {
   const [parallelJobs, setParallelJobs] = useState(40);
   const [modifiedHours, setModifiedHours] = useState(48);
   const [showSettings, setShowSettings] = useState(false);
+  // Сохраняем последний результат чтобы не терять его при завершении задачи
+  const [lastProgress, setLastProgress] = useState<TaskProgress | null>(null);
+  const [lastStatus, setLastStatus] = useState<TaskStatus | null>(null);
 
   // Проверяем наличие уже запущенного обновления при загрузке
   useEffect(() => {
@@ -35,14 +38,27 @@ export function UpdatePanel({ onUpdate }: UpdatePanelProps) {
   const { progress, status, isRunning } = useTaskPolling({
     taskId,
     endpoint: '/api/update',
-    onComplete: () => {
+    onComplete: (finalStatus) => {
       setTaskId(null);
       onUpdate?.();
+      // Сохраняем итоговый статус чтобы показать результат после завершения
+      if (finalStatus) setLastStatus(finalStatus);
     },
   });
 
+  // Синхронизируем lastProgress/lastStatus с актуальными данными пока задача идёт
+  useEffect(() => {
+    if (progress) setLastProgress(progress);
+    if (status) setLastStatus(status);
+  }, [progress, status]);
+
+  const displayProgress = progress ?? lastProgress;
+  const displayStatus = status ?? lastStatus;
+
   const startUpdate = async (type: 'full' | 'recent') => {
     setIsStarting(true);
+    setLastProgress(null);
+    setLastStatus(null);
     try {
       const res = await fetch('/api/update', {
         method: 'POST',
@@ -161,7 +177,20 @@ export function UpdatePanel({ onUpdate }: UpdatePanelProps) {
         )}
       </div>
 
-      <ProgressBar progress={progress} status={status} isRunning={isRunning} />
+      {(displayProgress || displayStatus) && (
+        <div className="relative">
+          <ProgressBar progress={displayProgress} status={displayStatus} isRunning={isRunning} />
+          {!isRunning && (
+            <button
+              onClick={() => { setLastProgress(null); setLastStatus(null); }}
+              className="absolute top-2 right-2 text-gray-400 hover:text-gray-600 text-xs px-1"
+              title="Скрыть"
+            >
+              ✕
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
