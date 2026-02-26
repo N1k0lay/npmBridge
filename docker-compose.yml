@@ -11,6 +11,7 @@ services:
       - "${HTTP_PORT:-8013}:80"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ${BINARIES_DIR:-/mnt/repo/npmBridge/binaries}:/binaries:ro
     depends_on:
       - webapp
       - verdaccio
@@ -76,6 +77,7 @@ services:
       - ${SCRIPTS_DIR:-./scripts}:/app/scripts:ro
       - /mnt/repo/npmBridge/data:/app/data
       - /mnt/repo/npmBridge/logs:/app/logs
+      - ${BINARIES_DIR:-/mnt/repo/npmBridge/binaries}:/app/binaries
     environment:
       - NODE_ENV=production
       - VERDACCIO_HOME=/app
