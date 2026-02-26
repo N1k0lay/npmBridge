@@ -365,6 +365,25 @@ export function getIndexingStatus(): IndexingStatus {
 export async function indexPackages(): Promise<void> { /* noop */ }
 
 /**
+ * Быстрое получение количества версий пакета из его package.json
+ */
+async function getVersionsCount(packageName: string): Promise<number> {
+  const storagePath = config.storageDir;
+  const packagePath = path.join(storagePath, packageName);
+  const packageJson = await readPackageJson(packagePath);
+  if (packageJson?.versions) {
+    return Object.keys(packageJson.versions as Record<string, unknown>).length;
+  }
+  // Fallback: считаем .tgz файлы
+  try {
+    const entries = await fs.readdir(packagePath, { withFileTypes: true });
+    return entries.filter(e => e.isFile() && e.name.endsWith('.tgz')).length;
+  } catch {
+    return 0;
+  }
+}
+
+/**
  * Умный поиск с сортировкой по релевантности
  */
 export async function searchPackages(options: SearchOptions): Promise<PaginatedResult<PackageSearchResult>> {
@@ -376,12 +395,14 @@ export async function searchPackages(options: SearchOptions): Promise<PaginatedR
   const sorted = sortByRelevance(filtered, lowerQuery);
 
   const offset = (page - 1) * limit;
-  const items = sorted.slice(offset, offset + limit).map(name => ({
+  const pageNames = sorted.slice(offset, offset + limit);
+
+  const items = await Promise.all(pageNames.map(async name => ({
     name,
     isScoped: name.startsWith('@'),
     scope: name.startsWith('@') ? name.split('/')[0] : undefined,
-    versionsCount: 0,
-  }));
+    versionsCount: await getVersionsCount(name),
+  })));
 
   return { items, total: filtered.length, page, limit, hasMore: offset + limit < filtered.length };
 }
@@ -430,12 +451,13 @@ export async function getSuggestions(query: string, limit: number = 10): Promise
   const allPackages = await getPackages();
   const filtered = allPackages.filter(pkg => pkg.toLowerCase().includes(lowerQuery));
   const sorted = sortByRelevance(filtered, lowerQuery);
-  return sorted.slice(0, limit).map(name => ({
+  const topNames = sorted.slice(0, limit);
+  return Promise.all(topNames.map(async name => ({
     name,
     isScoped: name.startsWith('@'),
     scope: name.startsWith('@') ? name.split('/')[0] : undefined,
-    versionsCount: 0,
-  }));
+    versionsCount: await getVersionsCount(name),
+  })));
 }
 
 export interface PackageHistoryItem {

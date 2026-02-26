@@ -148,12 +148,10 @@ export async function POST(request: Request) {
   try {
     const body = await request.json() as {
       package?: string;
-      mode?: string;
       updateFirst?: boolean;
     };
 
     const pkg = body.package && body.package !== 'all' ? body.package : undefined;
-    const mode = body.mode || 'cdn-mirror';
     const updateFirst = body.updateFirst ?? false;
 
     const stamp = Date.now();
@@ -167,7 +165,7 @@ export async function POST(request: Request) {
       ...(process.env.PNPM_STORE_DIR ? { PNPM_STORE_DIR: process.env.PNPM_STORE_DIR } : {}),
     };
 
-    const mirrorArgs: string[] = ['--mode', mode];
+    const mirrorArgs: string[] = [];
     if (pkg) mirrorArgs.push('--package', pkg);
 
     if (updateFirst && pkg) {

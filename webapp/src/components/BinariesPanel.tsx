@@ -373,7 +373,7 @@ function PackageRow({
 export default function BinariesPanel() {
   const [data, setData]               = useState<ApiData | null>(null);
   const [loading, setLoading]         = useState(true);
-  const [mode, setMode]               = useState<'cdn-mirror' | 'local-extract'>('cdn-mirror');
+  const mode                          = 'local-extract' as const;
   const [tasks, setTasks]             = useState<Record<string, TaskState>>({});
   const [treeOpen, setTreeOpen]       = useState(false);
   const [treeData, setTreeData]       = useState<TreeNode[] | null>(null);
@@ -474,7 +474,7 @@ export default function BinariesPanel() {
       const res = await fetch('/api/binaries', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ package: pkg, mode, updateFirst }),
+        body: JSON.stringify({ package: pkg, updateFirst }),
       });
       const { taskId } = await res.json() as { taskId: string };
       setTasks(prev => ({
@@ -491,7 +491,7 @@ export default function BinariesPanel() {
         },
       }));
     }
-  }, [mode]);
+  }, []);
 
   const anyRunning   = Object.values(tasks).some(t => t.running);
   const displaySize  = treeSize || data?.totalSize || 0;
@@ -528,14 +528,6 @@ export default function BinariesPanel() {
             </p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
-            <select
-              value={mode}
-              onChange={e => setMode(e.target.value as typeof mode)}
-              className="bg-white border border-gray-300 text-gray-700 text-sm rounded-lg px-3 py-1.5 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            >
-              <option value="cdn-mirror">cdn-mirror</option>
-              <option value="local-extract">local-extract</option>
-            </select>
             <button
               onClick={loadData}
               className="p-2 text-gray-500 hover:text-gray-700 rounded-lg hover:bg-gray-100 transition-colors"
@@ -654,14 +646,6 @@ export default function BinariesPanel() {
           </summary>
           <div className="px-4 pb-4 border-t border-gray-100 text-sm text-gray-700 space-y-4">
             <div className="mt-3">
-              <p className="font-semibold text-gray-800 mb-2">cdn-mirror — HTTP-зеркало</p>
-              <pre className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-xs text-gray-700 overflow-x-auto">{`PLAYWRIGHT_DOWNLOAD_HOST=http://repo.dmn.zbr:8013/binaries/playwright-cdn
-ELECTRON_MIRROR=http://repo.dmn.zbr:8013/binaries/electron/
-ELECTRON_CUSTOM_DIR={{ version }}
-PUPPETEER_DOWNLOAD_BASE_URL=http://repo.dmn.zbr:8013/binaries/puppeteer-cdn`}</pre>
-            </div>
-            <div>
-              <p className="font-semibold text-gray-800 mb-2">local-extract — папка</p>
               <pre className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-xs text-gray-700 overflow-x-auto">{`PLAYWRIGHT_BROWSERS_PATH=/path/to/playwright-browsers
 PUPPETEER_CACHE_DIR=/path/to/puppeteer-cache`}</pre>
             </div>

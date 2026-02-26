@@ -238,6 +238,36 @@ def install_package(
     return success, error_msg
 
 
+def _is_valid_package(pkg_dir: Path) -> bool:
+    """
+    Проверяет, является ли директория валидным npm-пакетом в storage Verdaccio.
+    
+    Пропускает пакеты, которые были удалены с npm (unpublished) или
+    у которых нет ни одной доступной версии.
+    
+    Args:
+        pkg_dir: Путь к директории пакета в storage
+    
+    Returns:
+        True если пакет валиден и его стоит обновлять
+    """
+    pkg_json = pkg_dir / 'package.json'
+    if not pkg_json.exists():
+        return True  # нет кэша — считаем валидным
+    try:
+        data = json.loads(pkg_json.read_text())
+        versions = data.get('versions', {})
+        if not versions:
+            # Пустой versions — пакет либо unpublished, либо никогда не скачивался
+            return False
+        time_info = data.get('time', {})
+        if 'unpublished' in time_info:
+            return False
+    except Exception:
+        pass
+    return True
+
+
 def get_all_packages() -> list[str]:
     """
     Получает список всех пакетов из storage Verdaccio.
@@ -263,10 +293,12 @@ def get_all_packages() -> list[str]:
             # Scoped пакеты (@org/package)
             for subitem in item.iterdir():
                 if subitem.is_dir() and not subitem.name.startswith('.'):
-                    packages.append(f"{item.name}/{subitem.name}")
+                    if _is_valid_package(subitem):
+                        packages.append(f"{item.name}/{subitem.name}")
         elif item.is_dir():
             # Обычные пакеты
-            packages.append(item.name)
+            if _is_valid_package(item):
+                packages.append(item.name)
     
     return packages
 
