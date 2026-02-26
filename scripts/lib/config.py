@@ -16,9 +16,9 @@ PNPM_CMD = os.environ.get('PNPM_CMD', 'pnpm')
 REGISTRY_URL = os.environ.get('REGISTRY_URL', 'http://localhost:8013/')
 
 # Параллелизм и таймауты
-PARALLEL_JOBS = int(os.environ.get('PARALLEL_JOBS', '40'))
+PARALLEL_JOBS = int(os.environ.get('PARALLEL_JOBS', '20'))  # снижено с 40 — меньше нагрузки на прокси
 MODIFIED_MINUTES = int(os.environ.get('MODIFIED_MINUTES', '2880'))  # 2 дня по умолчанию
-PACKAGE_TIMEOUT = int(os.environ.get('PACKAGE_TIMEOUT', '300'))  # 5 минут на пакет
+PACKAGE_TIMEOUT = int(os.environ.get('PACKAGE_TIMEOUT', '600'))  # 10 минут (strapi/yari имеют сотни зависимостей)
 
 # Файлы для отслеживания прогресса (устанавливаются динамически для каждой задачи)
 PROGRESS_FILE = os.environ.get('PROGRESS_FILE', '/tmp/update_progress.json')

@@ -106,7 +106,9 @@ def install_types_from_package_json(temp_dir: str) -> tuple[int, int]:
             PNPM_CMD, 'install',
             '--force',
             '--ignore-scripts',
-            f'--registry={REGISTRY_URL}'
+            f'--registry={REGISTRY_URL}',
+            '--network-concurrency=3',       # ≤3 параллельных соединения на процесс
+            '--config.fetch-timeout=120000',  # 2 минуты на один запрос к registry
         ]
         
         if PNPM_STORE_DIR:
@@ -182,7 +184,9 @@ def install_package(
             package_spec,
             '--force',
             '--ignore-scripts',
-            f'--registry={REGISTRY_URL}'
+            f'--registry={REGISTRY_URL}',
+            '--network-concurrency=3',        # ≤3 параллельных соединения на процесс
+            '--config.fetch-timeout=120000',  # 2 минуты на один запрос к registry
         ]
         
         # Добавляем путь к кешу pnpm если задан
@@ -213,11 +217,23 @@ def install_package(
                         log('WARNING', 'Не удалось установить некоторые типы')
         else:
             # Извлекаем сообщение об ошибке
-            error_msg = (
-                result.stderr.decode('utf-8', errors='replace')[:500] or
-                result.stdout.decode('utf-8', errors='replace')[:500]
-            )
-            log('ERROR', f'✗ {package}: {error_msg[:200]}')
+            stderr_text = result.stderr.decode('utf-8', errors='replace')
+            stdout_text = result.stdout.decode('utf-8', errors='replace')
+            error_msg = (stderr_text[:500] or stdout_text[:500])
+            
+            # Специальная диагностика для известных паттернов ошибок
+            combined = stderr_text + stdout_text
+            if 'spawn git ENOENT' in combined or 'git ls-remote' in combined:
+                error_msg = 'git dependency (git not available in container)'
+                log('WARNING', f'✗ {package}: содержит git-зависимость — пропускаем')
+            elif 'ERR_SOCKET_TIMEOUT' in combined or 'Socket timeout' in combined:
+                error_msg = 'socket timeout (verdaccio/proxy overloaded)'
+                log('WARNING', f'✗ {package}: socket timeout при запросе к verdaccio')
+            elif 'ERR_PNPM_NO_MATCHING_VERSION' in combined:
+                error_msg = 'no matching version for transitive dependency'
+                log('WARNING', f'✗ {package}: транзитивная зависимость без совпадающей версии')
+            else:
+                log('ERROR', f'✗ {package}: {error_msg[:200]}')
     
     except subprocess.TimeoutExpired:
         error_msg = f"timeout ({PACKAGE_TIMEOUT}s)"
@@ -268,6 +284,37 @@ def _is_valid_package(pkg_dir: Path) -> bool:
     return True
 
 
+def _is_valid_package_name(name: str) -> bool:
+    """
+    Проверяет, является ли имя директории допустимым именем npm-пакета.
+    
+    Отсеивает служебные файлы verdaccio, а также имена, которые pnpm
+    интерпретирует как CLI-флаги (начинающиеся с дефиса).
+    
+    Args:
+        name: Имя директории/пакета
+    
+    Returns:
+        True если имя допустимо
+    """
+    # Пустые и скрытые имена
+    if not name or name.startswith('.'):
+        return False
+    # Имена начинающиеся с дефиса — pnpm интерпретирует как флаги: -@latest → Unknown option
+    if name.startswith('-'):
+        return False
+    # Служебные файлы verdaccio
+    if name in ('.storerc', 'data.json', 'package.json', 'npm-shrinkwrap.json'):
+        return False
+    # Имя должно содержать только допустимые символы npm-пакета
+    # npm: [a-zA-Z0-9@._-] плюс /
+    import re
+    if not re.match(r'^[a-zA-Z0-9@._-][a-zA-Z0-9@._/-]*$', name):
+        log('WARNING', f'Пропускаем директорию с недопустимым именем пакета: {name!r}')
+        return False
+    return True
+
+
 def get_all_packages() -> list[str]:
     """
     Получает список всех пакетов из storage Verdaccio.
@@ -293,11 +340,11 @@ def get_all_packages() -> list[str]:
             # Scoped пакеты (@org/package)
             for subitem in item.iterdir():
                 if subitem.is_dir() and not subitem.name.startswith('.'):
-                    if _is_valid_package(subitem):
+                    if _is_valid_package_name(subitem.name) and _is_valid_package(subitem):
                         packages.append(f"{item.name}/{subitem.name}")
         elif item.is_dir():
             # Обычные пакеты
-            if _is_valid_package(item):
+            if _is_valid_package_name(item.name) and _is_valid_package(item):
                 packages.append(item.name)
     
     return packages
@@ -337,10 +384,13 @@ def get_modified_packages(minutes: Optional[int] = None) -> list[str]:
                 
                 if len(parts) >= 2 and parts[0].startswith('@'):
                     # Scoped пакет: @org/package
-                    packages.add(f"{parts[0]}/{parts[1]}")
+                    pkg_name = parts[1]
+                    if _is_valid_package_name(pkg_name):
+                        packages.add(f"{parts[0]}/{pkg_name}")
                 elif len(parts) >= 1 and not parts[0].startswith('.'):
                     # Обычный пакет
-                    packages.add(parts[0])
+                    if _is_valid_package_name(parts[0]):
+                        packages.add(parts[0])
         except Exception:
             continue
     
