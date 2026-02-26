@@ -58,6 +58,9 @@ export function UpdatePanel({ onUpdate }: UpdatePanelProps) {
       
       if (res.ok) {
         setTaskId(data.taskId);
+      } else if (res.status === 409 && data.taskId) {
+        // Обновление уже запущено — показываем его прогресс
+        setTaskId(data.taskId);
       } else {
         alert(data.error || 'Ошибка запуска обновления');
       }
