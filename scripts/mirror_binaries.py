@@ -5,56 +5,20 @@
 Пакеты playwright, electron, puppeteer скачивают бинари в postinstall-скриптах
 напрямую с CDN (минуя verdaccio). Этот скрипт загружает их заранее.
 
-──────────────────────────────────────────────────────────────────────────────
-РЕЖИМ 1: local-extract  (передача папки в закрытую сеть)
-──────────────────────────────────────────────────────────────────────────────
-Скрипт скачивает архивы и распаковывает их в структуру, которую инструменты
-ожидают найти на локальной файловой системе.
+РЕЖИМ cdn-mirror: zip-архивы в CDN-структуре путей — для HTTP-зеркала.
+  Клиент: PLAYWRIGHT_DOWNLOAD_HOST=http://repo.dmn.zbr:8013/binaries/playwright-cdn
+          ELECTRON_MIRROR=http://repo.dmn.zbr:8013/binaries/electron/
+          ELECTRON_CUSTOM_DIR={{ version }}
+          PUPPETEER_DOWNLOAD_BASE_URL=http://repo.dmn.zbr:8013/binaries/puppeteer-cdn
 
-  Результат:  binaries/
-                playwright-browsers/   ← PLAYWRIGHT_BROWSERS_PATH
-                  chromium-{rev}/
-                  chromium-headless-shell-{rev}/
-                  firefox-{rev}/
-                  webkit-{rev}/
-                electron-zips/         ← для ручной установки (см. ниже)
-                  v{ver}/electron-v{ver}-linux-x64.zip
-                puppeteer-cache/       ← PUPPETEER_CACHE_DIR
-                  chrome/linux64-{ver}/chrome-linux64/
+РЕЖИМ local-extract: распакованные бинари — для передачи папки в закрытую сеть.
+  Клиент: PLAYWRIGHT_BROWSERS_PATH=/path/to/playwright-browsers
+          PUPPETEER_CACHE_DIR=/path/to/puppeteer-cache
 
-  Клиент в закрытой сети копирует папку binaries/ и выставляет переменные:
-
-    playwright:
-      PLAYWRIGHT_BROWSERS_PATH=/path/to/binaries/playwright-browsers
-      npx playwright install --dry-run  # убедиться, что браузеры найдены
-
-    puppeteer:
-      PUPPETEER_CACHE_DIR=/path/to/binaries/puppeteer-cache
-
-    electron:  ограничение — postinstall всегда скачивает по сети.
-      Варианты:
-        а) Поднять минимальный HTTP-сервер: python3 -m http.server --directory binaries/
-           npm install electron  (с ELECTRON_MIRROR=http://localhost:8000/electron/)
-        б) Вручную распаковать zip в ~/.cache/electron/
-
-──────────────────────────────────────────────────────────────────────────────
-РЕЖИМ 2: cdn-mirror  (HTTP-зеркало CDN для закрытой сети с HTTP-доступом)
-──────────────────────────────────────────────────────────────────────────────
-Скрипт сохраняет архивы в структуре путей CDN. Nginx раздаёт их.
-Пакеты скачивают как обычно, только с нашего сервера.
-
-  Клиент выставляет:
-    PLAYWRIGHT_DOWNLOAD_HOST=http://repo.dmn.zbr:8013/binaries/playwright-cdn
-    ELECTRON_MIRROR=http://repo.dmn.zbr:8013/binaries/electron/
-    ELECTRON_CUSTOM_DIR={{ version }}
-    PUPPETEER_DOWNLOAD_BASE_URL=http://repo.dmn.zbr:8013/binaries/puppeteer-cdn
-
-──────────────────────────────────────────────────────────────────────────────
 Использование:
   python3 mirror_binaries.py                               # все, cdn-mirror
   python3 mirror_binaries.py --mode local-extract          # все, local-extract
   python3 mirror_binaries.py --package playwright          # только playwright
-  python3 mirror_binaries.py --package playwright --mode local-extract
   python3 mirror_binaries.py --version 1.58.2 --package playwright
   python3 mirror_binaries.py --status
   python3 mirror_binaries.py --list
@@ -67,7 +31,6 @@ import os
 import re
 import shutil
 import subprocess
-import sys
 import tarfile
 import tempfile
 import urllib.request
@@ -85,46 +48,114 @@ PNPM_CMD       = os.environ.get('PNPM_CMD',       'pnpm')
 REGISTRY_URL   = os.environ.get('REGISTRY_URL',   'http://verdaccio:4873/')
 PNPM_STORE_DIR = os.environ.get('PNPM_STORE_DIR', '')
 
-# Официальные CDN (нужен интернет на сервере при первом запуске)
+# Файлы прогресса/статуса — устанавливаются webapp при запуске как задача
+PROGRESS_FILE = os.environ.get('PROGRESS_FILE', '')
+STATUS_FILE   = os.environ.get('STATUS_FILE', '')
+LOG_FILE_PATH = os.environ.get('LOG_FILE', '')
+
+METADATA_FILE = BINARIES_DIR / 'metadata.json'
+
+# Официальные CDN
 PLAYWRIGHT_CDN = 'https://cdn.playwright.dev'
 ELECTRON_CDN   = 'https://github.com/electron/electron/releases/download'
 PUPPETEER_CDN  = 'https://storage.googleapis.com/chrome-for-testing-public'
 
-# Платформы для playwright / puppeteer
-# Для ARM добавьте 'ubuntu22.04-arm64'
-PLAYWRIGHT_PLATFORMS = [
-    'ubuntu22.04-x64',
-    'ubuntu24.04-x64',
-    'debian12-x64',
-]
+# Платформы (для ARM добавьте 'ubuntu22.04-arm64')
+PLAYWRIGHT_PLATFORMS = ['ubuntu22.04-x64', 'ubuntu24.04-x64', 'debian12-x64']
+PLAYWRIGHT_BROWSERS  = ['chromium', 'chromium-headless-shell', 'firefox', 'webkit']
+ELECTRON_PLATFORMS   = [('linux', 'x64')]
+PUPPETEER_PLATFORMS  = ['linux64']
 
-# Браузеры playwright
-PLAYWRIGHT_BROWSERS = [
-    'chromium',
-    'chromium-headless-shell',
-    'firefox',
-    'webkit',
-]
+# Описания для UI
+BINARY_PURPOSES: dict[str, str] = {
+    'chromium':                'Браузер Chromium для Playwright (тесты, автоматизация)',
+    'chromium-headless-shell': 'Chromium Headless Shell для Playwright (headless-режим)',
+    'firefox':                 'Браузер Firefox для Playwright',
+    'webkit':                  'Браузер WebKit/Safari для Playwright',
+    'electron':                'Electron runtime для десктопных приложений на Node.js',
+    'puppeteer':               'Chrome for Testing для Puppeteer (тесты, скрейпинг)',
+}
 
-# Платформы для electron (platform, arch)
-ELECTRON_PLATFORMS = [
-    ('linux', 'x64'),
-]
+# ─────────────────────────────────────────────────────────────────────────────
+# Прогресс / статус / лог
+# ─────────────────────────────────────────────────────────────────────────────
 
-# Платформы для puppeteer (chrome-for-testing)
-PUPPETEER_PLATFORMS = ['linux64']
+def log(level: str, msg: str):
+    ts = datetime.datetime.now().isoformat(timespec='seconds')
+    line = f'[{ts}] [{level}] {msg}'
+    print(line, flush=True)
+    if LOG_FILE_PATH:
+        try:
+            with open(LOG_FILE_PATH, 'a') as f:
+                f.write(line + '\n')
+        except Exception:
+            pass
+
+
+def write_status(status: str, message: str):
+    if not STATUS_FILE:
+        return
+    try:
+        with open(STATUS_FILE, 'w') as f:
+            json.dump({'status': status, 'message': message,
+                       'updatedAt': datetime.datetime.now().isoformat()}, f)
+    except Exception:
+        pass
+
+
+def write_progress(current: int, total: int, current_item: str,
+                   success: int, failed: int):
+    if not PROGRESS_FILE:
+        return
+    pct = round(current * 100 / total, 1) if total > 0 else 100
+    try:
+        with open(PROGRESS_FILE, 'w') as f:
+            json.dump({
+                'current': current, 'total': total, 'percent': pct,
+                'currentPackage': current_item,
+                'success': success, 'failed': failed,
+                'updatedAt': datetime.datetime.now().isoformat(),
+            }, f)
+    except Exception:
+        pass
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Метаданные
+# ─────────────────────────────────────────────────────────────────────────────
+
+def load_metadata() -> dict:
+    if METADATA_FILE.exists():
+        try:
+            return json.loads(METADATA_FILE.read_text('utf-8'))
+        except Exception:
+            pass
+    return {}
+
+
+def save_metadata(meta: dict):
+    BINARIES_DIR.mkdir(parents=True, exist_ok=True)
+    METADATA_FILE.write_text(
+        json.dumps(meta, ensure_ascii=False, indent=2), 'utf-8'
+    )
+
+
+def record_meta(dest: Path, info: dict):
+    """Записывает метаданные о файле/директории в metadata.json."""
+    try:
+        rel = str(dest.relative_to(BINARIES_DIR))
+    except ValueError:
+        rel = dest.name
+    meta = load_metadata()
+    meta[rel] = {**info, 'downloadedAt': datetime.datetime.now().isoformat(timespec='seconds')}
+    save_metadata(meta)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Утилиты
 # ─────────────────────────────────────────────────────────────────────────────
 
-def log(level: str, msg: str):
-    ts = datetime.datetime.now().isoformat(timespec='seconds')
-    print(f'[{ts}] [{level}] {msg}', flush=True)
-
-
 def download_file(url: str, dest: Path, label: str = '') -> bool:
-    """Скачивает файл по URL в dest. Пропускает если уже есть. True = успех."""
     if dest.exists():
         log('INFO', f'  ↷ уже есть: {dest.name}  ({dest.stat().st_size // 1048576} MB)')
         return True
@@ -141,7 +172,8 @@ def download_file(url: str, dest: Path, label: str = '') -> bool:
                 downloaded += len(chunk)
                 if total:
                     pct = downloaded * 100 // total
-                    print(f'\r    {pct:3d}%  {downloaded // 1048576} / {total // 1048576} MB', end='', flush=True)
+                    print(f'\r    {pct:3d}%  {downloaded // 1048576} / {total // 1048576} MB',
+                          end='', flush=True)
             print()
         tmp.rename(dest)
         log('INFO', f'  ✓ {dest.name}  ({dest.stat().st_size // 1048576} MB)')
@@ -156,13 +188,11 @@ def download_file(url: str, dest: Path, label: str = '') -> bool:
 
 
 def extract_zip(zip_path: Path, dest_dir: Path, label: str = '') -> bool:
-    """Распаковывает zip-архив в dest_dir."""
     dest_dir.mkdir(parents=True, exist_ok=True)
     try:
         log('INFO', f'  📦 Распаковка {label or zip_path.name} → {dest_dir}')
         with zipfile.ZipFile(zip_path) as zf:
             zf.extractall(dest_dir)
-        # Сделать бинари исполняемыми
         for p in dest_dir.rglob('*'):
             if p.is_file() and not p.suffix:
                 p.chmod(p.stat().st_mode | 0o111)
@@ -173,7 +203,6 @@ def extract_zip(zip_path: Path, dest_dir: Path, label: str = '') -> bool:
 
 
 def get_latest_tgz(package_name: str) -> Path | None:
-    """Находит самый свежий .tgz пакета в storage verdaccio."""
     pkg_dir = STORAGE_DIR / package_name
     if not pkg_dir.exists():
         return None
@@ -182,7 +211,6 @@ def get_latest_tgz(package_name: str) -> Path | None:
 
 
 def install_pkg_get_path(package_spec: str) -> Path | None:
-    """Устанавливает пакет (--ignore-scripts) во временную директорию."""
     temp = tempfile.mkdtemp(prefix='mirror_binaries_')
     cmd = [PNPM_CMD, 'install', package_spec, '--ignore-scripts',
            '--shamefully-hoist', f'--registry={REGISTRY_URL}']
@@ -206,7 +234,6 @@ def install_pkg_get_path(package_spec: str) -> Path | None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _playwright_browser_filename(browser: str, arch: str) -> str | None:
-    """Имя zip-архива для скачивания с CDN."""
     arm = '-arm64' if arch == 'arm64' else ''
     mapping = {
         'chromium':                f'chromium-linux{arm}.zip',
@@ -218,12 +245,12 @@ def _playwright_browser_filename(browser: str, arch: str) -> str | None:
 
 
 def _playwright_revisions(ver: str) -> dict[str, str | None]:
-    """Читает ревизии браузеров из установленного playwright-core@{ver}."""
     temp_dir = install_pkg_get_path(f'playwright-core@{ver}')
     if not temp_dir:
         return {}
     try:
-        index_js = temp_dir / 'node_modules' / 'playwright-core' / 'lib' / 'server' / 'registry' / 'index.js'
+        index_js = (temp_dir / 'node_modules' / 'playwright-core' /
+                    'lib' / 'server' / 'registry' / 'index.js')
         if not index_js.exists():
             log('WARNING', f'  index.js не найден в playwright-core@{ver}')
             return {}
@@ -232,32 +259,33 @@ def _playwright_revisions(ver: str) -> dict[str, str | None]:
         for browser in PLAYWRIGHT_BROWSERS:
             m = re.search(
                 rf'name:\s*["\']({re.escape(browser)})["\'].*?revision:\s*["\'](\d+)["\']',
-                content, re.DOTALL
-            )
+                content, re.DOTALL)
             revisions[browser] = m.group(2) if m else None
         return revisions
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
+def _detect_playwright_version() -> str | None:
+    tgz = get_latest_tgz('playwright-core') or get_latest_tgz('playwright')
+    return tgz.stem.rsplit('-', 1)[-1] if tgz else None
+
+
 # ─────────────────────────────────────────────────────────────────────────────
-# Playwright — cdn-mirror режим
+# Playwright — cdn-mirror
 # ─────────────────────────────────────────────────────────────────────────────
 
 def playwright_cdn_mirror(versions: list[str] | None = None):
-    """
-    Сохраняет архивы с CDN-структурой путей для HTTP-зеркала.
-
-    Структура: playwright-cdn/builds/{browser}/{revision}/{file}.zip
-    Клиент:    PLAYWRIGHT_DOWNLOAD_HOST=http://repo.dmn.zbr:8013/binaries/playwright-cdn
-    """
     dest_root = BINARIES_DIR / 'playwright-cdn'
     versions = versions or [_detect_playwright_version()]
     if not versions or not versions[0]:
-        log('ERROR', 'playwright/playwright-core не найден в storage')
-        return False
+        log('ERROR', 'playwright/playwright-core не найден в storage'); return False
 
-    ok = skip = fail = 0
+    # Считаем общее кол-во файлов для прогресса
+    total_items = len(versions) * len(PLAYWRIGHT_BROWSERS) * len(PLAYWRIGHT_PLATFORMS)
+    done = ok = fail = 0
+    write_status('running', 'Скачивание браузеров Playwright (cdn-mirror)...')
+
     for ver in versions:
         log('INFO', f'\n  playwright-core@{ver} — cdn-mirror')
         revisions = _playwright_revisions(ver)
@@ -267,92 +295,95 @@ def playwright_cdn_mirror(versions: list[str] | None = None):
             revision = revisions.get(browser)
             if not revision:
                 log('WARNING', f'  {browser}: ревизия не найдена')
-                continue
+                done += len(PLAYWRIGHT_PLATFORMS); continue
+
             for platform in PLAYWRIGHT_PLATFORMS:
                 arch = 'arm64' if 'arm64' in platform else ''
                 filename = _playwright_browser_filename(browser, arch)
                 if not filename:
-                    continue
+                    done += 1; continue
                 cdn_path = f'builds/{browser}/{revision}/{filename}'
-                r = download_file(
-                    f'{PLAYWRIGHT_CDN}/{cdn_path}',
-                    dest_root / cdn_path,
-                    f'{browser} rev={revision} [{platform}]'
-                )
-                if r: ok += 1
-                else: fail += 1
+                file_dest = dest_root / cdn_path
+                write_progress(done, total_items, f'{browser} [{platform}]', ok, fail)
+                r = download_file(f'{PLAYWRIGHT_CDN}/{cdn_path}', file_dest,
+                                  f'{browser} rev={revision} [{platform}]')
+                done += 1
+                if r:
+                    ok += 1
+                    record_meta(file_dest, {
+                        'package': 'playwright-core', 'packageVersion': ver,
+                        'browser': browser, 'browserRevision': revision,
+                        'purpose': BINARY_PURPOSES.get(browser, ''),
+                        'mode': 'cdn-mirror', 'platform': platform,
+                    })
+                else:
+                    fail += 1
 
-    log('INFO', f'\nPlaywright cdn-mirror: скачано={ok}, пропущено={skip}, ошибок={fail}')
+    write_progress(total_items, total_items, '', ok, fail)
+    log('INFO', f'\nPlaywright cdn-mirror: ok={ok}, fail={fail}')
     log('INFO', f'  PLAYWRIGHT_DOWNLOAD_HOST=http://repo.dmn.zbr:8013/binaries/playwright-cdn')
     return fail == 0
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Playwright — local-extract режим
+# Playwright — local-extract
 # ─────────────────────────────────────────────────────────────────────────────
 
 def playwright_local_extract(versions: list[str] | None = None):
-    """
-    Скачивает архивы и распаковывает их в структуру PLAYWRIGHT_BROWSERS_PATH.
-
-    Playwright ищет браузеры в: {PLAYWRIGHT_BROWSERS_PATH}/{browser}-{revision}/
-    После копирования папки клиент выставляет:
-      PLAYWRIGHT_BROWSERS_PATH=/path/to/binaries/playwright-browsers
-    """
     dest_root = BINARIES_DIR / 'playwright-browsers'
-    zip_cache = BINARIES_DIR / 'playwright-cdn'  # кэшируем zip-ы
+    zip_cache = BINARIES_DIR / 'playwright-cdn'
     versions = versions or [_detect_playwright_version()]
     if not versions or not versions[0]:
         log('ERROR', 'playwright/playwright-core не найден в storage'); return False
 
-    ok = skip = fail = 0
+    total_items = len(versions) * len(PLAYWRIGHT_BROWSERS)
+    done = ok = skip = fail = 0
+    write_status('running', 'Извлечение браузеров Playwright (local-extract)...')
+
     for ver in versions:
         log('INFO', f'\n  playwright-core@{ver} — local-extract')
         revisions = _playwright_revisions(ver)
-        log('INFO', f'  Ревизии: {revisions}')
 
         for browser in PLAYWRIGHT_BROWSERS:
             revision = revisions.get(browser)
+            write_progress(done, total_items, f'{browser}', ok, fail)
             if not revision:
-                log('WARNING', f'  {browser}: ревизия не найдена'); continue
+                log('WARNING', f'  {browser}: ревизия не найдена')
+                done += 1; continue
 
             browser_dir = dest_root / f'{browser}-{revision}'
             if browser_dir.exists() and any(browser_dir.iterdir()):
                 log('INFO', f'  {browser}-{revision}/: уже распакован')
-                skip += 1
-                continue
+                done += 1; skip += 1; continue
 
-            # Скачиваем хотя бы одну платформу (x64 Linux достаточно для папки)
             arch = ''
             filename = _playwright_browser_filename(browser, arch)
             if not filename:
-                continue
+                done += 1; continue
             cdn_path = f'builds/{browser}/{revision}/{filename}'
-            zip_dest  = zip_cache / cdn_path
-            downloaded = download_file(
-                f'{PLAYWRIGHT_CDN}/{cdn_path}', zip_dest,
-                f'{browser} rev={revision} linux-x64'
-            )
+            zip_dest = zip_cache / cdn_path
+            downloaded = download_file(f'{PLAYWRIGHT_CDN}/{cdn_path}', zip_dest,
+                                       f'{browser} rev={revision} linux-x64')
             if not downloaded:
-                fail += 1; continue
+                done += 1; fail += 1; continue
 
             if extract_zip(zip_dest, browser_dir, f'{browser}-{revision}'):
                 ok += 1
+                record_meta(browser_dir, {
+                    'package': 'playwright-core', 'packageVersion': ver,
+                    'browser': browser, 'browserRevision': revision,
+                    'purpose': BINARY_PURPOSES.get(browser, ''),
+                    'mode': 'local-extract',
+                    'envVar': f'PLAYWRIGHT_BROWSERS_PATH=<binaries>/playwright-browsers',
+                })
             else:
                 fail += 1
+            done += 1
 
-    log('INFO', f'\nPlaywright local-extract: распаковано={ok}, пропущено={skip}, ошибок={fail}')
-    log('INFO', f'  Скопируйте папку:  {dest_root}')
-    log('INFO', f'  Переменная:        PLAYWRIGHT_BROWSERS_PATH=/path/to/playwright-browsers')
-    log('INFO', f'  Проверка:          npx playwright install --dry-run chromium')
+    write_progress(total_items, total_items, '', ok, fail)
+    log('INFO', f'\nPlaywright local-extract: ok={ok}, skip={skip}, fail={fail}')
+    log('INFO', f'  PLAYWRIGHT_BROWSERS_PATH=/path/to/playwright-browsers')
     return fail == 0
-
-
-def _detect_playwright_version() -> str | None:
-    tgz = get_latest_tgz('playwright-core') or get_latest_tgz('playwright')
-    if not tgz:
-        return None
-    return tgz.stem.rsplit('-', 1)[-1]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -365,76 +396,85 @@ def _detect_electron_version() -> str | None:
 
 
 def electron_cdn_mirror(versions: list[str] | None = None):
-    """
-    Сохраняет zip-архивы electron с GitHub-структурой путей.
-    Клиент: ELECTRON_MIRROR=http://repo.dmn.zbr:8013/binaries/electron/
-            ELECTRON_CUSTOM_DIR={{ version }}
-    """
     dest_root = BINARIES_DIR / 'electron'
     versions = versions or [_detect_electron_version()]
     if not versions or not versions[0]:
         log('WARNING', 'electron не найден в storage — пропускаем'); return False
 
-    ok = fail = 0
+    total_items = len(versions) * len(ELECTRON_PLATFORMS)
+    done = ok = fail = 0
+    write_status('running', 'Скачивание Electron (cdn-mirror)...')
+
     for ver in versions:
         for platform, arch in ELECTRON_PLATFORMS:
             filename = f'electron-v{ver}-{platform}-{arch}.zip'
-            r = download_file(
-                f'{ELECTRON_CDN}/v{ver}/{filename}',
-                dest_root / f'v{ver}' / filename,
-                f'electron v{ver} {platform}-{arch}'
-            )
-            if r: ok += 1
-            else: fail += 1
+            file_dest = dest_root / f'v{ver}' / filename
+            write_progress(done, total_items, f'electron v{ver}', ok, fail)
+            r = download_file(f'{ELECTRON_CDN}/v{ver}/{filename}', file_dest,
+                              f'electron v{ver} {platform}-{arch}')
+            done += 1
+            if r:
+                ok += 1
+                record_meta(file_dest, {
+                    'package': 'electron', 'packageVersion': ver,
+                    'purpose': BINARY_PURPOSES.get('electron', ''),
+                    'mode': 'cdn-mirror', 'platform': f'{platform}-{arch}',
+                    'envVar': 'ELECTRON_MIRROR=<binaries>/electron/ + ELECTRON_CUSTOM_DIR={{ version }}',
+                })
+            else:
+                fail += 1
 
-    log('INFO', f'\nElectron cdn-mirror: скачано={ok}, ошибок={fail}')
-    log('INFO', f'  ELECTRON_MIRROR=http://repo.dmn.zbr:8013/binaries/electron/')
-    log('INFO', f'  ELECTRON_CUSTOM_DIR={{{{ version }}}}')
+    write_progress(total_items, total_items, '', ok, fail)
+    log('INFO', f'\nElectron cdn-mirror: ok={ok}, fail={fail}')
     return fail == 0
 
 
 def electron_local_extract(versions: list[str] | None = None):
-    """
-    Сохраняет zip-архивы electron.
-    ⚠ Electron postinstall всегда загружает по сети — нет переменной для локального пути.
-    Для закрытой сети ВАРИАНТЫ:
-      а) Поднять локальный HTTP: python3 -m http.server 8080 --directory binaries/
-         npm install electron (с ELECTRON_MIRROR=http://localhost:8080/electron/)
-      б) Предзаполнить кэш electron вручную:
-         mkdir -p ~/.cache/electron && cp electron-v{ver}-linux-x64.zip ~/.cache/electron/
-    """
     dest_root = BINARIES_DIR / 'electron-zips'
     versions = versions or [_detect_electron_version()]
     if not versions or not versions[0]:
         log('WARNING', 'electron не найден в storage — пропускаем'); return False
 
-    log('INFO', '⚠ Electron: postinstall не поддерживает ELECTRON_BROWSERS_PATH.')
-    log('INFO', '  Zip-архивы будут скачаны в electron-zips/ для ручной установки.')
+    log('INFO', '⚠ Electron: postinstall не поддерживает прямой путь к бинарю.')
+    log('INFO', '  Zip-архивы будут скачаны для ручной установки.')
 
-    ok = fail = 0
+    total_items = len(versions) * len(ELECTRON_PLATFORMS)
+    done = ok = fail = 0
+    write_status('running', 'Скачивание Electron zip-архивов...')
+
     for ver in versions:
         for platform, arch in ELECTRON_PLATFORMS:
             filename = f'electron-v{ver}-{platform}-{arch}.zip'
-            r = download_file(
-                f'{ELECTRON_CDN}/v{ver}/{filename}',
-                dest_root / f'v{ver}' / filename,
-                f'electron v{ver} {platform}-{arch}'
-            )
-            if r: ok += 1
-            else: fail += 1
+            file_dest = dest_root / f'v{ver}' / filename
+            write_progress(done, total_items, f'electron v{ver}', ok, fail)
+            r = download_file(f'{ELECTRON_CDN}/v{ver}/{filename}', file_dest,
+                              f'electron v{ver} {platform}-{arch}')
+            done += 1
+            if r:
+                ok += 1
+                record_meta(file_dest, {
+                    'package': 'electron', 'packageVersion': ver,
+                    'purpose': BINARY_PURPOSES.get('electron', ''),
+                    'mode': 'local-extract', 'platform': f'{platform}-{arch}',
+                    'note': 'Скопируйте zip в ~/.cache/electron/ или используйте локальный HTTP-сервер',
+                })
+            else:
+                fail += 1
 
-    log('INFO', f'\nElectron local: скачано={ok}, ошибок={fail}')
-    log('INFO', f'  Zip-архивы: {dest_root}')
-    log('INFO', f'  Инструкция по ручной установке:')
-    log('INFO', f'    mkdir -p ~/.cache/electron')
-    log('INFO', f'    cp electron-zips/v{{ver}}/electron-v{{ver}}-linux-x64.zip ~/.cache/electron/')
-    log('INFO', f'    # Тогда npm install electron найдёт бинарь в кэше')
+    write_progress(total_items, total_items, '', ok, fail)
+    log('INFO', f'\nElectron local: ok={ok}, fail={fail}')
+    log('INFO', f'  cp electron-zips/v<ver>/electron-v<ver>-linux-x64.zip ~/.cache/electron/')
     return fail == 0
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Puppeteer (chrome-for-testing)
+# Puppeteer
 # ─────────────────────────────────────────────────────────────────────────────
+
+def _detect_puppeteer_version() -> str | None:
+    tgz = get_latest_tgz('puppeteer') or get_latest_tgz('puppeteer-core')
+    return tgz.stem.rsplit('-', 1)[-1] if tgz else None
+
 
 def _detect_chrome_version_for_puppeteer(puppeteer_ver: str) -> str | None:
     temp_dir = install_pkg_get_path(f'puppeteer-core@{puppeteer_ver}')
@@ -442,15 +482,13 @@ def _detect_chrome_version_for_puppeteer(puppeteer_ver: str) -> str | None:
         return None
     try:
         pkg_root = temp_dir / 'node_modules' / 'puppeteer-core'
-        # Ищем версию Chrome в различных местах пакета
         candidates = [
             pkg_root / 'lib' / 'cjs' / 'puppeteer' / 'revisions.js',
             *pkg_root.rglob('versions.js'),
             *pkg_root.rglob('*version*.json'),
         ]
         for f in candidates:
-            if not isinstance(f, Path):
-                f = Path(str(f))
+            f = Path(str(f))
             if f.exists():
                 text = f.read_text('utf-8', errors='replace')
                 m = re.search(r'[\'"](1\d\d\.\d+\.\d+\.\d+)[\'"]', text)
@@ -464,87 +502,94 @@ def _detect_chrome_version_for_puppeteer(puppeteer_ver: str) -> str | None:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
-def _detect_puppeteer_version() -> str | None:
-    tgz = get_latest_tgz('puppeteer') or get_latest_tgz('puppeteer-core')
-    return tgz.stem.rsplit('-', 1)[-1] if tgz else None
-
-
 def puppeteer_cdn_mirror(versions: list[str] | None = None):
-    """
-    CDN-зеркало chrome-for-testing для puppeteer.
-    Клиент: PUPPETEER_DOWNLOAD_BASE_URL=http://repo.dmn.zbr:8013/binaries/puppeteer-cdn
-    """
     dest_root = BINARIES_DIR / 'puppeteer-cdn'
     versions = versions or [_detect_puppeteer_version()]
     if not versions or not versions[0]:
         log('WARNING', 'puppeteer не найден в storage — пропускаем'); return False
 
-    ok = fail = 0
+    total_items = len(versions) * len(PUPPETEER_PLATFORMS)
+    done = ok = fail = 0
+    write_status('running', 'Скачивание Chrome for Testing для Puppeteer (cdn-mirror)...')
+
     for pkg_ver in versions:
         chrome_ver = _detect_chrome_version_for_puppeteer(pkg_ver)
         if not chrome_ver:
-            log('WARNING', f'  puppeteer@{pkg_ver}: не удалось определить версию Chrome'); continue
+            log('WARNING', f'  puppeteer@{pkg_ver}: не удалось определить версию Chrome')
+            done += len(PUPPETEER_PLATFORMS); continue
         log('INFO', f'  puppeteer@{pkg_ver} → Chrome {chrome_ver}')
+
         for platform in PUPPETEER_PLATFORMS:
             filename = f'chrome-{platform}.zip'
-            r = download_file(
-                f'{PUPPETEER_CDN}/{chrome_ver}/{platform}/{filename}',
-                dest_root / chrome_ver / platform / filename,
-                f'Chrome {chrome_ver} [{platform}]'
-            )
-            if r: ok += 1
-            else: fail += 1
+            file_dest = dest_root / chrome_ver / platform / filename
+            write_progress(done, total_items, f'Chrome {chrome_ver} [{platform}]', ok, fail)
+            r = download_file(f'{PUPPETEER_CDN}/{chrome_ver}/{platform}/{filename}',
+                              file_dest, f'Chrome {chrome_ver} [{platform}]')
+            done += 1
+            if r:
+                ok += 1
+                record_meta(file_dest, {
+                    'package': 'puppeteer-core', 'packageVersion': pkg_ver,
+                    'chromeVersion': chrome_ver,
+                    'purpose': BINARY_PURPOSES.get('puppeteer', ''),
+                    'mode': 'cdn-mirror', 'platform': platform,
+                    'envVar': 'PUPPETEER_DOWNLOAD_BASE_URL=<binaries>/puppeteer-cdn',
+                })
+            else:
+                fail += 1
 
-    log('INFO', f'\nPuppeteer cdn-mirror: скачано={ok}, ошибок={fail}')
-    log('INFO', f'  PUPPETEER_DOWNLOAD_BASE_URL=http://repo.dmn.zbr:8013/binaries/puppeteer-cdn')
+    write_progress(total_items, total_items, '', ok, fail)
+    log('INFO', f'\nPuppeteer cdn-mirror: ok={ok}, fail={fail}')
     return fail == 0
 
 
 def puppeteer_local_extract(versions: list[str] | None = None):
-    """
-    Распаковывает Chrome в структуру PUPPETEER_CACHE_DIR.
-
-    Puppeteer ищет браузер в: {PUPPETEER_CACHE_DIR}/chrome/{platform}-{buildId}/
-    Клиент: PUPPETEER_CACHE_DIR=/path/to/binaries/puppeteer-cache
-    """
     dest_root = BINARIES_DIR / 'puppeteer-cache'
     zip_cache = BINARIES_DIR / 'puppeteer-cdn'
     versions = versions or [_detect_puppeteer_version()]
     if not versions or not versions[0]:
         log('WARNING', 'puppeteer не найден в storage — пропускаем'); return False
 
-    ok = skip = fail = 0
+    total_items = len(versions) * len(PUPPETEER_PLATFORMS)
+    done = ok = skip = fail = 0
+    write_status('running', 'Извлечение Chrome for Testing для Puppeteer...')
+
     for pkg_ver in versions:
         chrome_ver = _detect_chrome_version_for_puppeteer(pkg_ver)
         if not chrome_ver:
-            log('WARNING', f'  puppeteer@{pkg_ver}: не удалось определить версию Chrome'); continue
+            log('WARNING', f'  puppeteer@{pkg_ver}: версия Chrome не найдена')
+            done += len(PUPPETEER_PLATFORMS); continue
         log('INFO', f'  puppeteer@{pkg_ver} → Chrome {chrome_ver}')
 
         for platform in PUPPETEER_PLATFORMS:
-            # puppeteer кэш: chrome/{platform}-{buildId}/chrome-{platform}/
             cache_dir = dest_root / 'chrome' / f'{platform}-{chrome_ver}'
+            write_progress(done, total_items, f'Chrome {chrome_ver} [{platform}]', ok, fail)
             if cache_dir.exists() and any(cache_dir.iterdir()):
                 log('INFO', f'  Chrome {chrome_ver} [{platform}]: уже распакован')
-                skip += 1; continue
+                done += 1; skip += 1; continue
 
             filename = f'chrome-{platform}.zip'
             zip_dest = zip_cache / chrome_ver / platform / filename
-            downloaded = download_file(
-                f'{PUPPETEER_CDN}/{chrome_ver}/{platform}/{filename}',
-                zip_dest,
-                f'Chrome {chrome_ver} [{platform}]'
-            )
+            downloaded = download_file(f'{PUPPETEER_CDN}/{chrome_ver}/{platform}/{filename}',
+                                       zip_dest, f'Chrome {chrome_ver} [{platform}]')
             if not downloaded:
-                fail += 1; continue
+                done += 1; fail += 1; continue
 
             if extract_zip(zip_dest, cache_dir, f'Chrome {chrome_ver} {platform}'):
                 ok += 1
+                record_meta(cache_dir, {
+                    'package': 'puppeteer-core', 'packageVersion': pkg_ver,
+                    'chromeVersion': chrome_ver,
+                    'purpose': BINARY_PURPOSES.get('puppeteer', ''),
+                    'mode': 'local-extract', 'platform': platform,
+                    'envVar': 'PUPPETEER_CACHE_DIR=<binaries>/puppeteer-cache',
+                })
             else:
                 fail += 1
+            done += 1
 
-    log('INFO', f'\nPuppeteer local-extract: распаковано={ok}, пропущено={skip}, ошибок={fail}')
-    log('INFO', f'  Скопируйте папку: {dest_root}')
-    log('INFO', f'  Переменная:       PUPPETEER_CACHE_DIR=/path/to/puppeteer-cache')
+    write_progress(total_items, total_items, '', ok, fail)
+    log('INFO', f'\nPuppeteer local-extract: ok={ok}, skip={skip}, fail={fail}')
     return fail == 0
 
 
@@ -556,7 +601,6 @@ def show_status():
     log('INFO', f'Содержимое {BINARIES_DIR}:')
     if not BINARIES_DIR.exists():
         log('INFO', '  (директория не существует)'); return
-
     total_bytes = 0
     for subdir in sorted(BINARIES_DIR.iterdir()):
         if not subdir.is_dir(): continue
@@ -564,7 +608,6 @@ def show_status():
         size = sum(f.stat().st_size for f in all_files)
         total_bytes += size
         log('INFO', f'  {subdir.name}/  {len(all_files)} файлов  {size // 1048576} MB')
-        # Покажем несколько примеров
         for f in sorted(all_files)[:4]:
             log('INFO', f'    {f.relative_to(subdir)}  ({f.stat().st_size // 1048576} MB)')
         if len(all_files) > 4:
@@ -577,39 +620,20 @@ def show_status():
 # ─────────────────────────────────────────────────────────────────────────────
 
 HANDLERS = {
-    'playwright': {
-        'cdn-mirror':    playwright_cdn_mirror,
-        'local-extract': playwright_local_extract,
-    },
-    'electron': {
-        'cdn-mirror':    electron_cdn_mirror,
-        'local-extract': electron_local_extract,
-    },
-    'puppeteer': {
-        'cdn-mirror':    puppeteer_cdn_mirror,
-        'local-extract': puppeteer_local_extract,
-    },
+    'playwright': {'cdn-mirror': playwright_cdn_mirror, 'local-extract': playwright_local_extract},
+    'electron':   {'cdn-mirror': electron_cdn_mirror,   'local-extract': electron_local_extract},
+    'puppeteer':  {'cdn-mirror': puppeteer_cdn_mirror,  'local-extract': puppeteer_local_extract},
 }
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Загрузка бинарников npm-пакетов для закрытых сетей',
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    parser.add_argument('--package', choices=list(HANDLERS.keys()), help='Конкретный пакет')
-    parser.add_argument(
-        '--mode', choices=['cdn-mirror', 'local-extract'], default='cdn-mirror',
-        help=(
-            'cdn-mirror: zip-архивы с CDN-структурой путей (для HTTP-зеркала). '
-            'local-extract: распаковать бинари в структуру для прямого использования '
-            '(для передачи папки в закрытую сеть).'
-        )
-    )
-    parser.add_argument('--version', action='append', dest='versions',
-                        help='Версия пакета (повторяемый: --version 1.57 --version 1.58)')
-    parser.add_argument('--status', action='store_true', help='Показать что уже скачано')
-    parser.add_argument('--list',   action='store_true', help='Поддерживаемые пакеты')
+        description='Загрузка бинарников npm-пакетов для закрытых сетей')
+    parser.add_argument('--package', choices=list(HANDLERS.keys()))
+    parser.add_argument('--mode', choices=['cdn-mirror', 'local-extract'], default='cdn-mirror')
+    parser.add_argument('--version', action='append', dest='versions')
+    parser.add_argument('--status', action='store_true')
+    parser.add_argument('--list',   action='store_true')
     args = parser.parse_args()
 
     if args.list:
@@ -621,17 +645,25 @@ def main():
         show_status(); return
 
     targets = [args.package] if args.package else list(HANDLERS.keys())
-    log('INFO', f'Режим: {args.mode}')
-    log('INFO', f'Пакеты: {", ".join(targets)}')
-    log('INFO', f'Директория: {BINARIES_DIR}')
+    write_status('running', f'Запуск: {", ".join(targets)} [{args.mode}]')
+    log('INFO', f'Режим: {args.mode}  Пакеты: {", ".join(targets)}  Директория: {BINARIES_DIR}')
 
+    all_ok = True
     for pkg in targets:
-        handler = HANDLERS[pkg][args.mode]
         try:
-            handler(args.versions)
+            write_status('running', f'Обработка {pkg}...')
+            r = HANDLERS[pkg][args.mode](args.versions)
+            if not r:
+                all_ok = False
         except Exception as e:
             log('ERROR', f'{pkg}: {e}')
             import traceback; traceback.print_exc()
+            all_ok = False
+
+    write_status(
+        'completed' if all_ok else 'completed_with_errors',
+        'Готово' if all_ok else 'Завершено с ошибками'
+    )
 
 
 if __name__ == '__main__':

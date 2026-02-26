@@ -1,13 +1,27 @@
 import { NextResponse } from 'next/server';
-import { readdir, stat } from 'fs/promises';
+import { readdir, stat, readFile } from 'fs/promises';
 import { join } from 'path';
+import {
+  runScript,
+  isTaskRunning,
+  getTaskProgress,
+  getTaskStatus,
+  getTaskLogs,
+} from '@/lib/scripts';
 
 const BINARIES_DIR = process.env.BINARIES_DIR || '/app/binaries';
+
+// Название npm-пакета для команды обновления
+const UPDATE_PACKAGE_MAP: Record<string, string> = {
+  playwright: 'playwright-core',
+  electron: 'electron',
+  puppeteer: 'puppeteer-core',
+};
 
 export interface TreeNode {
   name: string;
   type: 'file' | 'dir';
-  size?: number;         // байты, только для файлов
+  size?: number;
   children?: TreeNode[];
 }
 
@@ -22,6 +36,7 @@ async function buildTree(dir: string, depth = 0, maxDepth = 6): Promise<TreeNode
   entries.sort();
   const nodes: TreeNode[] = [];
   for (const name of entries) {
+    if (name === 'metadata.json') continue;
     const full = join(dir, name);
     let info;
     try { info = await stat(full); } catch { continue; }
@@ -47,24 +62,95 @@ function calcDirSize(nodes: TreeNode[]): number {
   return total;
 }
 
-export async function GET() {
+function annotate(nodes: TreeNode[]): TreeNode[] {
+  return nodes.map(n => {
+    if (n.type === 'dir' && n.children) {
+      const children = annotate(n.children);
+      return { ...n, size: calcDirSize(children), children };
+    }
+    return n;
+  });
+}
+
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const taskId = searchParams.get('taskId');
+
+  // ── Polling режим ──────────────────────────────────────────────────────────
+  if (taskId) {
+    const [progress, status, logs] = await Promise.all([
+      getTaskProgress(taskId),
+      getTaskStatus(taskId),
+      getTaskLogs(taskId, 200),
+    ]);
+    return NextResponse.json({
+      taskId,
+      running: isTaskRunning(taskId),
+      progress,
+      status,
+      logs,
+    });
+  }
+
+  // ── Обычный GET: дерево + метаданные ──────────────────────────────────────
   try {
     const tree = await buildTree(BINARIES_DIR);
-    // Добавляем суммарный размер к директориям (удобно для отображения)
-    function annotate(nodes: TreeNode[]): TreeNode[] {
-      return nodes.map(n => {
-        if (n.type === 'dir' && n.children) {
-          const children = annotate(n.children);
-          return { ...n, size: calcDirSize(children), children };
-        }
-        return n;
-      });
-    }
+    const annotatedTree = annotate(tree);
+
+    let metadata: Record<string, unknown> = {};
+    try {
+      const raw = await readFile(join(BINARIES_DIR, 'metadata.json'), 'utf-8');
+      metadata = JSON.parse(raw);
+    } catch { /* нет метаданных */ }
+
     return NextResponse.json({
       path: BINARIES_DIR,
-      tree: annotate(tree),
+      tree: annotatedTree,
       totalSize: calcDirSize(tree),
+      metadata,
     });
+  } catch (e) {
+    return NextResponse.json({ error: String(e) }, { status: 500 });
+  }
+}
+
+export async function POST(request: Request) {
+  try {
+    const body = await request.json() as {
+      package?: string;
+      mode?: string;
+      updateFirst?: boolean;
+    };
+
+    const pkg = body.package && body.package !== 'all' ? body.package : undefined;
+    const mode = body.mode || 'cdn-mirror';
+    const updateFirst = body.updateFirst ?? false;
+
+    const stamp = Date.now();
+    const taskId = `binaries_${pkg || 'all'}_${stamp}`;
+
+    const extraEnv: Record<string, string> = {
+      BINARIES_DIR,
+      ...(process.env.STORAGE_DIR ? { STORAGE_DIR: process.env.STORAGE_DIR } : {}),
+      ...(process.env.REGISTRY_URL ? { REGISTRY_URL: process.env.REGISTRY_URL } : {}),
+      ...(process.env.PNPM_CMD ? { PNPM_CMD: process.env.PNPM_CMD } : {}),
+      ...(process.env.PNPM_STORE_DIR ? { PNPM_STORE_DIR: process.env.PNPM_STORE_DIR } : {}),
+    };
+
+    const mirrorArgs: string[] = ['--mode', mode];
+    if (pkg) mirrorArgs.push('--package', pkg);
+
+    if (updateFirst && pkg) {
+      const npmPkg = UPDATE_PACKAGE_MAP[pkg] ?? pkg;
+      const updateTaskId = `${taskId}_update`;
+      runScript('update_single.py', updateTaskId, extraEnv, [npmPkg]).then(() => {
+        runScript('mirror_binaries.py', taskId, extraEnv, mirrorArgs);
+      });
+    } else {
+      runScript('mirror_binaries.py', taskId, extraEnv, mirrorArgs);
+    }
+
+    return NextResponse.json({ taskId });
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });
   }

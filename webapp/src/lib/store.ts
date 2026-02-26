@@ -21,7 +21,6 @@ import { config } from './scripts';
 // Константы
 // ─────────────────────────────────────────────
 
-const EXCLUDE_FILES = new Set(['.sinopia-db.json', '.verdaccio-db.json', '.DS_Store']);
 
 // ─────────────────────────────────────────────
 // Интерфейсы
@@ -94,14 +93,6 @@ export interface HistoryData {
 // Утилиты
 // ─────────────────────────────────────────────
 
-/** Атомарная запись JSON через временный файл */
-function writeJsonSync(filePath: string, data: unknown): void {
-  const dir = path.dirname(filePath);
-  fs.mkdirSync(dir, { recursive: true });
-  const tmp = filePath + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf-8');
-  fs.renameSync(tmp, filePath);
-}
 
 async function writeJsonAsync(filePath: string, data: unknown): Promise<void> {
   const dir = path.dirname(filePath);

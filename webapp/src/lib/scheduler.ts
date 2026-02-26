@@ -1,3 +1,4 @@
+/* eslint-disable no-console */
 import { refreshStorageStats } from './storage';
 
 let schedulerInterval: NodeJS.Timeout | null = null;

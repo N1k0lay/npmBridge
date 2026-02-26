@@ -3,7 +3,6 @@ import { existsSync } from 'fs';
 import fs from 'fs/promises';
 import path from 'path';
 import { getDiff } from '@/lib/store';
-import { config } from '@/lib/scripts';
 
 export async function GET(
   _request: Request,
