@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 
+
 interface TaskProgress {
   current: number;
   total: number;
@@ -39,6 +40,9 @@ export function useTaskPolling({
   const onCompleteRef = useRef(onComplete);
   onCompleteRef.current = onComplete;
 
+  // Защита от повторного вызова onComplete до срабатывания clearInterval
+  const completedRef = useRef(false);
+
   const poll = useCallback(async () => {
     if (!taskId) return;
 
@@ -50,7 +54,8 @@ export function useTaskPolling({
       setStatus(data.status);
       setIsRunning(data.running);
 
-      if (!data.running && data.status) {
+      if (!data.running && data.status && !completedRef.current) {
+        completedRef.current = true;
         onCompleteRef.current?.(data.status);
       }
     } catch (error) {
@@ -59,6 +64,8 @@ export function useTaskPolling({
   }, [taskId, endpoint]);
 
   useEffect(() => {
+    completedRef.current = false;
+
     if (!taskId) {
       setProgress(null);
       setStatus(null);

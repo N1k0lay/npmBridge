@@ -88,6 +88,7 @@ services:
       - SCRIPTS_DIR=/app/scripts
       - DATA_DIR=/app/data
       - LOGS_DIR=/app/logs
+      - BINARIES_DIR=/app/binaries
       - PNPM_CMD=pnpm
       - REGISTRY_URL=http://verdaccio:4873/
       - PARALLEL_JOBS=${PARALLEL_JOBS:-40}

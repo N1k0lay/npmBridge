@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { History, RefreshCw, Check, XCircle, AlertTriangle, Clock } from 'lucide-react';
 
 interface UpdateRecord {
@@ -14,11 +14,15 @@ interface UpdateRecord {
   packagesFailed: number;
 }
 
-export function HistoryPanel() {
+interface HistoryPanelProps {
+  refreshTrigger?: number;
+}
+
+export function HistoryPanel({ refreshTrigger }: HistoryPanelProps) {
   const [updates, setUpdates] = useState<UpdateRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  const loadHistory = async () => {
+  const loadHistory = useCallback(async () => {
     setIsLoading(true);
     try {
       const res = await fetch('/api/update');
@@ -29,11 +33,11 @@ export function HistoryPanel() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     loadHistory();
-  }, []);
+  }, [loadHistory, refreshTrigger]);
 
   const formatDate = (dateStr: string) => {
     return new Date(dateStr).toLocaleString('ru-RU');

@@ -1,20 +1,20 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { UpdatePanel } from '@/components/UpdatePanel';
 import { HistoryPanel } from '@/components/HistoryPanel';
 
 export default function UpdatePage() {
-  const [refreshKey, setRefreshKey] = useState(0);
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
 
-  const handleRefresh = () => {
-    setRefreshKey(prev => prev + 1);
-  };
+  const handleRefresh = useCallback(() => {
+    setRefreshTrigger(prev => prev + 1);
+  }, []);
 
   return (
-    <div key={refreshKey} className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
       <UpdatePanel onUpdate={handleRefresh} />
-      <HistoryPanel />
+      <HistoryPanel refreshTrigger={refreshTrigger} />
     </div>
   );
 }

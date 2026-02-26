@@ -12,7 +12,8 @@ import {
   Search,
   Copy,
   Check,
-  Settings
+  Settings,
+  HardDrive
 } from 'lucide-react';
 
 type NavItem = {
@@ -28,7 +29,8 @@ const navItems: NavItem[] = [
   { id: 'diff', href: '/diff', label: 'Diff', icon: <Package className="w-4 h-4" /> },
   { id: 'broken', href: '/broken', label: 'Проверка', icon: <AlertTriangle className="w-4 h-4" /> },
   { id: 'history', href: '/history', label: 'История', icon: <Clock className="w-4 h-4" /> },
-  { id: 'networks', href: '/networks', label: 'Сети', icon: <Globe className="w-4 h-4" /> },
+  { id: 'networks',  href: '/networks',  label: 'Сети',       icon: <Globe className="w-4 h-4" /> },
+  { id: 'binaries',  href: '/binaries',  label: 'Бинарники',  icon: <HardDrive className="w-4 h-4" /> },
 ];
 
 export function Navigation() {
@@ -63,6 +65,7 @@ export function Navigation() {
     if (pathname.startsWith('/broken')) return 'broken';
     if (pathname.startsWith('/history')) return 'history';
     if (pathname.startsWith('/networks')) return 'networks';
+    if (pathname.startsWith('/binaries')) return 'binaries';
     return 'search';
   };
 
