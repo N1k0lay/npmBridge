@@ -60,9 +60,30 @@ PLAYWRIGHT_CDN = 'https://cdn.playwright.dev'
 ELECTRON_CDN   = 'https://github.com/electron/electron/releases/download'
 PUPPETEER_CDN  = 'https://storage.googleapis.com/chrome-for-testing-public'
 
-# Платформы (для ARM добавьте 'ubuntu22.04-arm64')
-PLAYWRIGHT_PLATFORMS = ['ubuntu22.04-x64', 'ubuntu24.04-x64', 'debian12-x64']
-PLAYWRIGHT_BROWSERS  = ['chromium', 'chromium-headless-shell', 'firefox', 'webkit']
+# Скачиваемые файлы для linux x64 по браузерам.
+# chromium/headless-shell используют CFT-пути (builds/cft/{browserVersion}/...),
+# firefox и webkit — обычные пути (builds/{browser}/{revision}/...).
+# Формат: (browser, path_template, uses_browser_version_field)
+PLAYWRIGHT_LINUX_DOWNLOADS = [
+    ('chromium',
+     'builds/cft/{val}/linux64/chrome-linux64.zip',
+     True),
+    ('chromium-headless-shell',
+     'builds/cft/{val}/linux64/chrome-headless-shell-linux64.zip',
+     True),
+    ('firefox',
+     'builds/firefox/{val}/firefox-ubuntu-22.04.zip',
+     False),
+    ('firefox',
+     'builds/firefox/{val}/firefox-ubuntu-24.04.zip',
+     False),
+    ('webkit',
+     'builds/webkit/{val}/webkit-ubuntu-22.04.zip',
+     False),
+    ('webkit',
+     'builds/webkit/{val}/webkit-ubuntu-24.04.zip',
+     False),
+]
 ELECTRON_PLATFORMS   = [('linux', 'x64')]
 PUPPETEER_PLATFORMS  = ['linux64']
 
@@ -233,30 +254,13 @@ def install_pkg_get_path(package_spec: str) -> Path | None:
 # Playwright — общая логика
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _playwright_browser_filename(browser: str, arch: str) -> str | None:
-    arm = '-arm64' if arch == 'arm64' else ''
-    mapping = {
-        'chromium':                f'chromium-linux{arm}.zip',
-        'chromium-headless-shell': f'chromium-headless-shell-linux{arm}.zip',
-        'firefox':                 f'firefox-ubuntu-22.04{arm}.zip',
-        'webkit':                  f'webkit-ubuntu-22.04{arm}.zip',
-    }
-    return mapping.get(browser)
-
-
-def _playwright_revisions(ver: str) -> dict[str, str | None]:
+def _playwright_browser_info(tgz: Path) -> dict[str, dict]:
     """
-    Читает ревизии браузеров прямо из browsers.json внутри tgz-архива.
-    Не требует pnpm install — быстро и надёжно.
+    Читает browsers.json из tgz и возвращает для каждого браузера
+    {'revision': ..., 'browserVersion': ...}.
     """
-    tgz = get_latest_tgz('playwright-core') or get_latest_tgz('playwright')
-    if not tgz:
-        log('WARNING', f'  Не найден tgz playwright-core в storage')
-        return {}
-
     try:
         with tarfile.open(tgz, 'r:gz') as tf:
-            # browsers.json лежит как package/browsers.json
             member = next(
                 (m for m in tf.getmembers() if m.name.endswith('browsers.json')),
                 None,
@@ -272,13 +276,17 @@ def _playwright_revisions(ver: str) -> dict[str, str | None]:
         log('WARNING', f'  Ошибка чтения {tgz.name}: {e}')
         return {}
 
-    revisions: dict[str, str | None] = {}
-    for browser in PLAYWRIGHT_BROWSERS:
-        entry = next((b for b in data.get('browsers', []) if b.get('name') == browser), None)
-        revisions[browser] = str(entry['revision']) if entry else None
+    result: dict[str, dict] = {}
+    for entry in data.get('browsers', []):
+        name = entry.get('name', '')
+        result[name] = {
+            'revision':       str(entry.get('revision', '')),
+            'browserVersion': entry.get('browserVersion', ''),
+        }
 
-    log('INFO', f'  Ревизии из {tgz.name}: { {k: v for k, v in revisions.items() if v} }')
-    return revisions
+    log('INFO', f'  Браузеры из {tgz.name}: ' +
+        ', '.join(f'{k} rev={v["revision"]}' for k, v in result.items() if v["revision"]))
+    return result
 
 
 def _detect_playwright_version() -> str | None:
@@ -292,47 +300,42 @@ def _detect_playwright_version() -> str | None:
 
 def playwright_cdn_mirror(versions: list[str] | None = None):
     dest_root = BINARIES_DIR / 'playwright-cdn'
-    versions = versions or [_detect_playwright_version()]
-    if not versions or not versions[0]:
+    tgz = get_latest_tgz('playwright-core') or get_latest_tgz('playwright')
+    if not tgz:
         log('ERROR', 'playwright/playwright-core не найден в storage'); return False
+    ver = tgz.stem.rsplit('-', 1)[-1]
+    log('INFO', f'\n  playwright-core@{ver} — cdn-mirror')
+    browser_info = _playwright_browser_info(tgz)
+    if not browser_info:
+        log('ERROR', 'Не удалось прочитать browsers.json из tgz'); return False
 
-    # Считаем общее кол-во файлов для прогресса
-    total_items = len(versions) * len(PLAYWRIGHT_BROWSERS) * len(PLAYWRIGHT_PLATFORMS)
+    total_items = len(PLAYWRIGHT_LINUX_DOWNLOADS)
     done = ok = fail = 0
     write_status('running', 'Скачивание браузеров Playwright (cdn-mirror)...')
 
-    for ver in versions:
-        log('INFO', f'\n  playwright-core@{ver} — cdn-mirror')
-        revisions = _playwright_revisions(ver)
-        log('INFO', f'  Ревизии: {revisions}')
-
-        for browser in PLAYWRIGHT_BROWSERS:
-            revision = revisions.get(browser)
-            if not revision:
-                log('WARNING', f'  {browser}: ревизия не найдена')
-                done += len(PLAYWRIGHT_PLATFORMS); continue
-
-            for platform in PLAYWRIGHT_PLATFORMS:
-                arch = 'arm64' if 'arm64' in platform else ''
-                filename = _playwright_browser_filename(browser, arch)
-                if not filename:
-                    done += 1; continue
-                cdn_path = f'builds/{browser}/{revision}/{filename}'
-                file_dest = dest_root / cdn_path
-                write_progress(done, total_items, f'{browser} [{platform}]', ok, fail)
-                r = download_file(f'{PLAYWRIGHT_CDN}/{cdn_path}', file_dest,
-                                  f'{browser} rev={revision} [{platform}]')
-                done += 1
-                if r:
-                    ok += 1
-                    record_meta(file_dest, {
-                        'package': 'playwright-core', 'packageVersion': ver,
-                        'browser': browser, 'browserRevision': revision,
-                        'purpose': BINARY_PURPOSES.get(browser, ''),
-                        'mode': 'cdn-mirror', 'platform': platform,
-                    })
-                else:
-                    fail += 1
+    for (browser, path_tmpl, use_bver) in PLAYWRIGHT_LINUX_DOWNLOADS:
+        info = browser_info.get(browser, {})
+        val = info.get('browserVersion') if use_bver else info.get('revision')
+        if not val:
+            log('WARNING', f'  {browser}: нет {"browserVersion" if use_bver else "revision"}')
+            done += 1; fail += 1; continue
+        cdn_path = path_tmpl.format(val=val)
+        file_dest = dest_root / cdn_path
+        write_progress(done, total_items, browser, ok, fail)
+        r = download_file(f'{PLAYWRIGHT_CDN}/{cdn_path}', file_dest, browser)
+        done += 1
+        if r:
+            ok += 1
+            record_meta(file_dest, {
+                'package': 'playwright-core', 'packageVersion': ver,
+                'browser': browser,
+                'revision': info.get('revision', ''),
+                'browserVersion': info.get('browserVersion', ''),
+                'purpose': BINARY_PURPOSES.get(browser, ''),
+                'mode': 'cdn-mirror',
+            })
+        else:
+            fail += 1
 
     write_progress(total_items, total_items, '', ok, fail)
     log('INFO', f'\nPlaywright cdn-mirror: ok={ok}, fail={fail}')
@@ -347,53 +350,61 @@ def playwright_cdn_mirror(versions: list[str] | None = None):
 def playwright_local_extract(versions: list[str] | None = None):
     dest_root = BINARIES_DIR / 'playwright-browsers'
     zip_cache = BINARIES_DIR / 'playwright-cdn'
-    versions = versions or [_detect_playwright_version()]
-    if not versions or not versions[0]:
+    tgz = get_latest_tgz('playwright-core') or get_latest_tgz('playwright')
+    if not tgz:
         log('ERROR', 'playwright/playwright-core не найден в storage'); return False
+    ver = tgz.stem.rsplit('-', 1)[-1]
+    log('INFO', f'\n  playwright-core@{ver} — local-extract')
+    browser_info = _playwright_browser_info(tgz)
+    if not browser_info:
+        log('ERROR', 'Не удалось прочитать browsers.json из tgz'); return False
 
-    total_items = len(versions) * len(PLAYWRIGHT_BROWSERS)
+    # Для local-extract берём первый zip для каждого уникального браузера
+    seen: set[str] = set()
+    downloads: list[tuple[str, str]] = []  # (browser, cdn_path)
+    for (browser, path_tmpl, use_bver) in PLAYWRIGHT_LINUX_DOWNLOADS:
+        if browser in seen:
+            continue
+        seen.add(browser)
+        info = browser_info.get(browser, {})
+        val = info.get('browserVersion') if use_bver else info.get('revision')
+        if val:
+            downloads.append((browser, path_tmpl.format(val=val)))
+
+    total_items = len(downloads)
     done = ok = skip = fail = 0
     write_status('running', 'Извлечение браузеров Playwright (local-extract)...')
 
-    for ver in versions:
-        log('INFO', f'\n  playwright-core@{ver} — local-extract')
-        revisions = _playwright_revisions(ver)
+    for (browser, cdn_path) in downloads:
+        info = browser_info.get(browser, {})
+        revision = info.get('revision', '')
+        write_progress(done, total_items, browser, ok, fail)
 
-        for browser in PLAYWRIGHT_BROWSERS:
-            revision = revisions.get(browser)
-            write_progress(done, total_items, f'{browser}', ok, fail)
-            if not revision:
-                log('WARNING', f'  {browser}: ревизия не найдена')
-                done += 1; continue
+        browser_dir = dest_root / f'{browser}-{revision}'
+        if browser_dir.exists() and any(browser_dir.iterdir()):
+            log('INFO', f'  {browser}-{revision}/: уже распакован')
+            done += 1; skip += 1; continue
 
-            browser_dir = dest_root / f'{browser}-{revision}'
-            if browser_dir.exists() and any(browser_dir.iterdir()):
-                log('INFO', f'  {browser}-{revision}/: уже распакован')
-                done += 1; skip += 1; continue
+        zip_dest = zip_cache / cdn_path
+        downloaded = download_file(f'{PLAYWRIGHT_CDN}/{cdn_path}', zip_dest,
+                                   f'{browser} rev={revision}')
+        if not downloaded:
+            done += 1; fail += 1; continue
 
-            arch = ''
-            filename = _playwright_browser_filename(browser, arch)
-            if not filename:
-                done += 1; continue
-            cdn_path = f'builds/{browser}/{revision}/{filename}'
-            zip_dest = zip_cache / cdn_path
-            downloaded = download_file(f'{PLAYWRIGHT_CDN}/{cdn_path}', zip_dest,
-                                       f'{browser} rev={revision} linux-x64')
-            if not downloaded:
-                done += 1; fail += 1; continue
-
-            if extract_zip(zip_dest, browser_dir, f'{browser}-{revision}'):
-                ok += 1
-                record_meta(browser_dir, {
-                    'package': 'playwright-core', 'packageVersion': ver,
-                    'browser': browser, 'browserRevision': revision,
-                    'purpose': BINARY_PURPOSES.get(browser, ''),
-                    'mode': 'local-extract',
-                    'envVar': f'PLAYWRIGHT_BROWSERS_PATH=<binaries>/playwright-browsers',
-                })
-            else:
-                fail += 1
-            done += 1
+        if extract_zip(zip_dest, browser_dir, f'{browser}-{revision}'):
+            ok += 1
+            record_meta(browser_dir, {
+                'package': 'playwright-core', 'packageVersion': ver,
+                'browser': browser,
+                'revision': revision,
+                'browserVersion': info.get('browserVersion', ''),
+                'purpose': BINARY_PURPOSES.get(browser, ''),
+                'mode': 'local-extract',
+                'envVar': 'PLAYWRIGHT_BROWSERS_PATH=<binaries>/playwright-browsers',
+            })
+        else:
+            fail += 1
+        done += 1
 
     write_progress(total_items, total_items, '', ok, fail)
     log('INFO', f'\nPlaywright local-extract: ok={ok}, skip={skip}, fail={fail}')
