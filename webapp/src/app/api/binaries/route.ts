@@ -7,6 +7,7 @@ import {
   getTaskProgress,
   getTaskStatus,
   getTaskLogs,
+  listTaskHistory,
 } from '@/lib/scripts';
 
 const BINARIES_DIR = process.env.BINARIES_DIR || '/app/binaries';
@@ -132,12 +133,15 @@ export async function GET(request: Request) {
       }
     }
 
+    const recentTasks = await listTaskHistory('binaries_', 20);
+
     return NextResponse.json({
       path: BINARIES_DIR,
       tree: annotatedTree,
       totalSize,
       metadata,
       availablePackages,
+      recentTasks,
     });
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });

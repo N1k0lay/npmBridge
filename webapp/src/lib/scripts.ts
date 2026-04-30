@@ -61,6 +61,14 @@ export interface TaskStatus {
   updatedAt: string;
 }
 
+export interface TaskHistoryEntry {
+  taskId: string;
+  status: TaskStatus | null;
+  running: boolean;
+  updatedAt: string | null;
+  hasLog: boolean;
+}
+
 /**
  * Запуск Python скрипта с переменными окружения
  * Python скрипты по-прежнему пишут в JSON файлы для прогресса/статуса,
@@ -227,4 +235,47 @@ export async function getTaskLogs(taskId: string, tail?: number): Promise<string
   } catch {
     return '';
   }
+}
+
+/**
+ * История задач по префиксу taskId на основе сохранённых status/log файлов.
+ */
+export async function listTaskHistory(prefix: string, limit = 20): Promise<TaskHistoryEntry[]> {
+  let files: string[];
+
+  try {
+    files = await fs.readdir(config.dataDir);
+  } catch {
+    return [];
+  }
+
+  const suffix = '_status.json';
+  const statusFiles = files.filter(
+    (file) => file.startsWith(prefix) && file.endsWith(suffix)
+  );
+
+  const tasks = await Promise.all(statusFiles.map(async (file) => {
+    const taskId = file.slice(0, -suffix.length);
+    const status = await getTaskStatus(taskId);
+
+    let hasLog = false;
+    try {
+      await fs.access(path.join(config.logsDir, `${taskId}.log`));
+      hasLog = true;
+    } catch {
+      hasLog = false;
+    }
+
+    return {
+      taskId,
+      status,
+      running: isTaskRunning(taskId),
+      updatedAt: status?.updatedAt ?? null,
+      hasLog,
+    } satisfies TaskHistoryEntry;
+  }));
+
+  return tasks
+    .sort((left, right) => (right.updatedAt ?? '').localeCompare(left.updatedAt ?? ''))
+    .slice(0, limit);
 }

@@ -8,6 +8,7 @@ import {
   writeTaskStatus,
   getTaskLogs,
   stopTask,
+  listTaskHistory,
 } from '@/lib/scripts';
 import { 
   addDiff, 
@@ -68,8 +69,11 @@ export async function GET(request: Request) {
   }
   
   // Возвращаем список всех diff
-  const diffs = await getDiffs();
-  const pendingDiff = await getPendingDiff();
+  const [diffs, pendingDiff, recentTasks] = await Promise.all([
+    getDiffs(),
+    getPendingDiff(),
+    listTaskHistory('diff_task_', 20),
+  ]);
   
   // Проверяем актуальность pending diff
   if (pendingDiff) {
@@ -83,6 +87,7 @@ export async function GET(request: Request) {
     diffs: diffs.slice(0, 50),
     pendingDiff: (pendingDiff?.status === 'pending' || pendingDiff?.status === 'partial') ? pendingDiff : null,
     runningTaskId,
+    recentTasks,
   });
 }
 

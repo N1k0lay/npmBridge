@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { HardDrive, RefreshCw, Download, RotateCcw, ChevronDown, ChevronUp, ChevronRight, Folder, File, Loader2 } from 'lucide-react';
 import type { TreeNode } from '@/app/api/binaries/route';
+import { TaskHistoryItem, TaskHistoryList } from './TaskHistoryList';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Типы
@@ -26,6 +27,7 @@ interface ApiData {
   totalSize: number;
   metadata: Record<string, MetaEntry>;
   availablePackages: string[];
+  recentTasks: TaskHistoryItem[];
 }
 
 interface TaskProgress {
@@ -375,6 +377,7 @@ export default function BinariesPanel() {
   const [loading, setLoading]         = useState(true);
   const mode                          = 'local-extract' as const;
   const [tasks, setTasks]             = useState<Record<string, TaskState>>({});
+  const [recentTasks, setRecentTasks] = useState<TaskHistoryItem[]>([]);
   const [treeOpen, setTreeOpen]       = useState(false);
   const [treeData, setTreeData]       = useState<TreeNode[] | null>(null);
   const [treeLoading, setTreeLoading] = useState(false);
@@ -388,7 +391,11 @@ export default function BinariesPanel() {
   const loadData = useCallback(async () => {
     try {
       const res = await fetch('/api/binaries?skipTree=1');
-      if (res.ok) setData(await res.json() as ApiData);
+      if (res.ok) {
+        const nextData = await res.json() as ApiData;
+        setData(nextData);
+        setRecentTasks(nextData.recentTasks || []);
+      }
     } finally {
       setLoading(false);
     }
@@ -599,6 +606,25 @@ export default function BinariesPanel() {
           )}
         </div>
       )}
+
+      <div className="bg-white rounded-lg shadow-lg p-6">
+        <TaskHistoryList
+          title="История задач бинарников"
+          tasks={recentTasks}
+          emptyText="Завершённых задач пока нет"
+          getLabel={(task) => {
+            const parts = task.taskId.split('_');
+            const pkgId = parts[1] || 'all';
+
+            if (pkgId === 'all') {
+              return 'Скачать все бинарники';
+            }
+
+            const metaEntry = PKG_META[pkgId];
+            return metaEntry ? `Бинарники: ${metaEntry.label}` : `Бинарники: ${pkgId}`;
+          }}
+        />
+      </div>
 
       {/* ── Файловое дерево (ленивая загрузка) ────────────────────────── */}
       <div className="bg-white rounded-lg shadow-lg overflow-hidden">

@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { Package, Download, Check, AlertTriangle, Clock, Archive, RefreshCw, Network, CheckCircle2, Square } from 'lucide-react';
 import { useTaskPolling, TaskProgress, TaskStatus } from '@/hooks/useTaskPolling';
 import { ProgressBar } from './ProgressBar';
+import { TaskHistoryItem, TaskHistoryList } from './TaskHistoryList';
 
 interface NetworkConfig {
   id: string;
@@ -41,6 +42,7 @@ export function DiffPanel({ onRefresh }: DiffPanelProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [lastProgress, setLastProgress] = useState<TaskProgress | null>(null);
   const [lastStatus, setLastStatus] = useState<TaskStatus | null>(null);
+  const [recentTasks, setRecentTasks] = useState<TaskHistoryItem[]>([]);
 
   const loadNetworks = async () => {
     try {
@@ -58,6 +60,7 @@ export function DiffPanel({ onRefresh }: DiffPanelProps) {
       const data = await res.json();
       setDiffs(data.diffs || []);
       setPendingDiff(data.pendingDiff);
+      setRecentTasks(data.recentTasks || []);
       if (data.runningTaskId) {
         setTaskId((current) => current || data.runningTaskId);
       }
@@ -450,6 +453,15 @@ export function DiffPanel({ onRefresh }: DiffPanelProps) {
           </button>
         </div>
       )}
+
+      <div className="mt-6">
+        <TaskHistoryList
+          title="История запусков создания diff"
+          tasks={recentTasks}
+          emptyText="Запусков создания diff пока не было"
+          getLabel={() => 'Создание diff'}
+        />
+      </div>
 
       {/* History */}
       <div>

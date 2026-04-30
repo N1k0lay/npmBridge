@@ -3,13 +3,16 @@ import {
   runScript, 
   getTaskProgress, 
   getTaskStatus, 
-  isTaskRunning 
+  isTaskRunning,
+  getTaskLogs,
+  listTaskHistory,
 } from '@/lib/scripts';
 import { 
   addBrokenCheck, 
   updateBrokenCheck, 
   getBrokenChecks,
-  getLastBrokenCheck 
+  getLastBrokenCheck,
+  getRunningBrokenCheck,
 } from '@/lib/store';
 
 // GET - получить статус проверки или историю
@@ -18,9 +21,10 @@ export async function GET(request: Request) {
   const taskId = searchParams.get('taskId');
   
   if (taskId) {
-    const [progress, status] = await Promise.all([
+    const [progress, status, logs] = await Promise.all([
       getTaskProgress(taskId),
       getTaskStatus(taskId),
+      getTaskLogs(taskId, 200),
     ]);
     
     return NextResponse.json({
@@ -28,17 +32,22 @@ export async function GET(request: Request) {
       running: isTaskRunning(taskId),
       progress,
       status,
+      logs,
     });
   }
   
-  const [checks, lastCheck] = await Promise.all([
+  const [checks, lastCheck, runningCheck, recentTasks] = await Promise.all([
     getBrokenChecks(),
     getLastBrokenCheck(),
+    getRunningBrokenCheck(),
+    listTaskHistory('broken_', 20),
   ]);
   
   return NextResponse.json({
     checks: checks.slice(0, 20),
     lastCheck,
+    runningCheck,
+    recentTasks,
   });
 }
 

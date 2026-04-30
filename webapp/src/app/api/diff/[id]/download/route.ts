@@ -1,8 +1,11 @@
 import { NextResponse } from 'next/server';
-import { existsSync } from 'fs';
+import { createReadStream, existsSync } from 'fs';
 import fs from 'fs/promises';
 import path from 'path';
+import { Readable } from 'stream';
 import { getDiff } from '@/lib/store';
+
+export const runtime = 'nodejs';
 
 export async function GET(
   _request: Request,
@@ -30,15 +33,16 @@ export async function GET(
     );
   }
   
-  // Читаем файл и отдаём
-  const fileBuffer = await fs.readFile(archivePath);
+  const stats = await fs.stat(archivePath);
   const filename = path.basename(archivePath);
+  const fileStream = createReadStream(archivePath);
   
-  return new NextResponse(fileBuffer, {
+  return new NextResponse(Readable.toWeb(fileStream) as ReadableStream, {
     headers: {
       'Content-Type': 'application/gzip',
       'Content-Disposition': `attachment; filename="${filename}"`,
-      'Content-Length': diff.archiveSize.toString(),
+      'Content-Length': stats.size.toString(),
+      'Accept-Ranges': 'bytes',
     },
   });
 }
