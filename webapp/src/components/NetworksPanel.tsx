@@ -89,15 +89,13 @@ export function NetworksPanel({ onNetworksChange }: NetworksPanelProps) {
 
     try {
       const res = await fetch('/api/networks', {
-        method: 'PATCH',
+        method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           id: editData.id,
-          updates: {
-            name: editData.name,
-            description: editData.description,
-            color: editData.color,
-          },
+          name: editData.name,
+          description: editData.description,
+          color: editData.color,
         }),
       });
 
