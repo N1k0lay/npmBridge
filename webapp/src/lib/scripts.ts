@@ -45,6 +45,8 @@ export interface TaskProgress {
   percent: number;
   currentPackage?: string;
   currentFile?: string;
+  processedBytes?: number;
+  totalBytes?: number;
   success?: number;
   failed?: number;
   broken?: number;
@@ -156,6 +158,18 @@ export function isTaskRunning(taskId: string): boolean {
 }
 
 /**
+ * Найти активную задачу по префиксу taskId.
+ */
+export function findRunningTaskId(prefix: string): string | null {
+  for (const taskId of activeProcesses.keys()) {
+    if (taskId.startsWith(prefix)) {
+      return taskId;
+    }
+  }
+  return null;
+}
+
+/**
  * Получение прогресса задачи из JSON файла (Python туда пишет)
  */
 export async function getTaskProgress(taskId: string): Promise<TaskProgress | null> {
@@ -179,6 +193,23 @@ export async function getTaskStatus(taskId: string): Promise<TaskStatus | null> 
   } catch {
     return null;
   }
+}
+
+/**
+ * Перезаписать статус задачи, если post-processing уже в Node.js.
+ */
+export async function writeTaskStatus(
+  taskId: string,
+  status: TaskStatus['status'],
+  message: string
+): Promise<void> {
+  const statusFile = path.join(config.dataDir, `${taskId}_status.json`);
+  await fs.mkdir(config.dataDir, { recursive: true });
+  await fs.writeFile(
+    statusFile,
+    JSON.stringify({ status, message, updatedAt: new Date().toISOString() }),
+    'utf-8'
+  );
 }
 
 /**

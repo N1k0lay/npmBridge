@@ -8,6 +8,9 @@ export interface TaskProgress {
   total: number;
   percent: number;
   currentPackage?: string;
+  currentFile?: string;
+  processedBytes?: number;
+  totalBytes?: number;
   success?: number;
   failed?: number;
   broken?: number;
@@ -35,6 +38,7 @@ export function useTaskPolling({
   const [progress, setProgress] = useState<TaskProgress | null>(null);
   const [status, setStatus] = useState<TaskStatus | null>(null);
   const [isRunning, setIsRunning] = useState(false);
+  const [logs, setLogs] = useState<string>('');
   
   // Используем ref для onComplete чтобы избежать пересоздания poll
   const onCompleteRef = useRef(onComplete);
@@ -53,6 +57,7 @@ export function useTaskPolling({
       setProgress(data.progress);
       setStatus(data.status);
       setIsRunning(data.running);
+      setLogs(typeof data.logs === 'string' ? data.logs : '');
 
       if (!data.running && data.status && !completedRef.current) {
         completedRef.current = true;
@@ -70,6 +75,7 @@ export function useTaskPolling({
       setProgress(null);
       setStatus(null);
       setIsRunning(false);
+      setLogs('');
       return;
     }
 
@@ -79,5 +85,5 @@ export function useTaskPolling({
     return () => clearInterval(pollInterval);
   }, [taskId, poll, interval]);
 
-  return { progress, status, isRunning };
+  return { progress, status, isRunning, logs };
 }

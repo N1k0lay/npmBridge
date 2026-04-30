@@ -3,7 +3,11 @@ import {
   runScript, 
   getTaskProgress, 
   getTaskStatus, 
-  isTaskRunning 
+  isTaskRunning,
+  findRunningTaskId,
+  writeTaskStatus,
+  getTaskLogs,
+  stopTask,
 } from '@/lib/scripts';
 import { 
   addDiff, 
@@ -22,12 +26,14 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const diffId = searchParams.get('id');
   const taskId = searchParams.get('taskId');
+  const runningTaskId = findRunningTaskId('diff_task_');
   
   // Если запрашивается статус задачи создания diff
   if (taskId) {
-    const [progress, status] = await Promise.all([
+    const [progress, status, logs] = await Promise.all([
       getTaskProgress(taskId),
       getTaskStatus(taskId),
+      getTaskLogs(taskId, 200),
     ]);
     
     return NextResponse.json({
@@ -35,6 +41,7 @@ export async function GET(request: Request) {
       running: isTaskRunning(taskId),
       progress,
       status,
+      logs,
     });
   }
   
@@ -75,11 +82,23 @@ export async function GET(request: Request) {
   return NextResponse.json({
     diffs: diffs.slice(0, 50),
     pendingDiff: (pendingDiff?.status === 'pending' || pendingDiff?.status === 'partial') ? pendingDiff : null,
+    runningTaskId,
   });
 }
 
 // POST - создать новый diff
 export async function POST(_request: Request) {
+  const runningTaskId = findRunningTaskId('diff_task_');
+  if (runningTaskId) {
+    return NextResponse.json(
+      {
+        error: 'Создание diff уже выполняется',
+        taskId: runningTaskId,
+      },
+      { status: 409 }
+    );
+  }
+
   // Diff создаётся независимо от сетей
   // Сети - это просто метки для отслеживания, куда был перенесён diff
   
@@ -100,61 +119,55 @@ export async function POST(_request: Request) {
     await markDiffOutdated(existingPending.id);
   }
   
-  const taskId = `diff_${Date.now()}`;
+  const taskId = `diff_task_${Date.now()}`;
   const diffId = `diff_${new Date().toISOString().replace(/[:.]/g, '-')}`;
   
-  // Запускаем скрипт создания diff
-  const result = await runScript('create_diff.py', taskId, {
+  void runScript('create_diff.py', taskId, {
     DIFF_ID: diffId,
-  });
-  
-  if (!result.success) {
-    return NextResponse.json(
-      { error: 'Ошибка создания diff', details: result.error },
-      { status: 500 }
-    );
-  }
-  
-  // Парсим результат
-  try {
-    const outputLines = result.output.split('\n').filter(line => line.trim());
-    const lastLine = outputLines[outputLines.length - 1];
-    const diffResult = JSON.parse(lastLine);
-    
-    if (diffResult.filesCount === 0) {
-      return NextResponse.json({
-        message: 'Различий не найдено',
-        diff: null,
-      });
+  }).then(async (result) => {
+    if (!result.success) {
+      await writeTaskStatus(taskId, 'failed', result.error || 'Ошибка создания diff');
+      return;
     }
-    
-    // Создаём запись в истории
-    const diffRecord: DiffRecord = {
-      id: diffId,
-      createdAt: new Date().toISOString(),
-      status: 'pending',
-      transfers: [],
-      archivePath: diffResult.archivePath,
-      archiveSize: diffResult.archiveSize,
-      archiveSizeHuman: diffResult.archiveSizeHuman,
-      filesCount: diffResult.filesCount,
-      sinceTime: diffResult.sinceTime || null,
-      storageSnapshotTime: diffResult.storageSnapshotTime,
-    };
-    
-    await addDiff(diffRecord);
-    
-    return NextResponse.json({
-      message: 'Diff создан успешно',
-      diff: diffRecord,
-    });
-    
-  } catch (error) {
-    return NextResponse.json(
-      { error: 'Ошибка парсинга результата', details: String(error) },
-      { status: 500 }
-    );
-  }
+
+    try {
+      const outputLines = result.output.split('\n').filter(line => line.trim());
+      const lastLine = outputLines[outputLines.length - 1];
+      const diffResult = JSON.parse(lastLine) as {
+        archivePath: string | null;
+        archiveSize: number;
+        archiveSizeHuman: string;
+        filesCount: number;
+        sinceTime?: string | null;
+        storageSnapshotTime: string;
+      };
+
+      if (diffResult.filesCount === 0 || !diffResult.archivePath) {
+        await writeTaskStatus(taskId, 'completed', 'Новых пакетов не найдено');
+        return;
+      }
+
+      const diffRecord: DiffRecord = {
+        id: diffId,
+        createdAt: new Date().toISOString(),
+        status: 'pending',
+        transfers: [],
+        archivePath: diffResult.archivePath,
+        archiveSize: diffResult.archiveSize,
+        archiveSizeHuman: diffResult.archiveSizeHuman,
+        filesCount: diffResult.filesCount,
+        sinceTime: diffResult.sinceTime || null,
+        storageSnapshotTime: diffResult.storageSnapshotTime,
+      };
+
+      await addDiff(diffRecord);
+      await writeTaskStatus(taskId, 'completed', `Diff создан: ${diffRecord.filesCount} файлов, ${diffRecord.archiveSizeHuman}`);
+    } catch (error) {
+      await writeTaskStatus(taskId, 'failed', `Ошибка обработки результата diff: ${String(error)}`);
+    }
+  });
+
+  return NextResponse.json({ taskId });
 }
 
 // PATCH - подтвердить перенос diff в сеть
@@ -232,4 +245,29 @@ export async function PATCH(request: Request) {
     { error: 'Неизвестное действие' },
     { status: 400 }
   );
+}
+
+// DELETE - остановить создание diff
+export async function DELETE(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const taskId = searchParams.get('taskId');
+
+  if (!taskId) {
+    return NextResponse.json(
+      { error: 'taskId обязателен' },
+      { status: 400 }
+    );
+  }
+
+  const stopped = stopTask(taskId);
+  if (!stopped) {
+    return NextResponse.json(
+      { error: 'Задача не найдена или уже завершена' },
+      { status: 404 }
+    );
+  }
+
+  await writeTaskStatus(taskId, 'failed', 'Создание diff остановлено пользователем');
+
+  return NextResponse.json({ message: 'Создание diff остановлено' });
 }

@@ -1,7 +1,9 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Package, Download, Check, AlertTriangle, Clock, Archive, RefreshCw, Network, CheckCircle2 } from 'lucide-react';
+import { Package, Download, Check, AlertTriangle, Clock, Archive, RefreshCw, Network, CheckCircle2, Square } from 'lucide-react';
+import { useTaskPolling, TaskProgress, TaskStatus } from '@/hooks/useTaskPolling';
+import { ProgressBar } from './ProgressBar';
 
 interface NetworkConfig {
   id: string;
@@ -33,9 +35,12 @@ export function DiffPanel({ onRefresh }: DiffPanelProps) {
   const [diffs, setDiffs] = useState<Diff[]>([]);
   const [pendingDiff, setPendingDiff] = useState<Diff | null>(null);
   const [networks, setNetworks] = useState<NetworkConfig[]>([]);
+  const [taskId, setTaskId] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [confirmingNetwork, setConfirmingNetwork] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [lastProgress, setLastProgress] = useState<TaskProgress | null>(null);
+  const [lastStatus, setLastStatus] = useState<TaskStatus | null>(null);
 
   const loadNetworks = async () => {
     try {
@@ -53,6 +58,9 @@ export function DiffPanel({ onRefresh }: DiffPanelProps) {
       const data = await res.json();
       setDiffs(data.diffs || []);
       setPendingDiff(data.pendingDiff);
+      if (data.runningTaskId) {
+        setTaskId((current) => current || data.runningTaskId);
+      }
     } catch (error) {
       console.error('Error loading diffs:', error);
     } finally {
@@ -60,12 +68,36 @@ export function DiffPanel({ onRefresh }: DiffPanelProps) {
     }
   };
 
+  const { progress, status, isRunning, logs } = useTaskPolling({
+    taskId,
+    endpoint: '/api/diff',
+    onComplete: async (finalStatus) => {
+      setTaskId(null);
+      if (finalStatus) {
+        setLastStatus(finalStatus);
+      }
+      await loadDiffs();
+      onRefresh?.();
+    },
+  });
+
+  useEffect(() => {
+    if (progress) {
+      setLastProgress(progress);
+    }
+    if (status) {
+      setLastStatus(status);
+    }
+  }, [progress, status]);
+
   useEffect(() => {
     Promise.all([loadNetworks(), loadDiffs()]);
   }, []);
 
   const createDiff = async () => {
     setIsCreating(true);
+    setLastProgress(null);
+    setLastStatus(null);
     try {
       const res = await fetch('/api/diff', {
         method: 'POST',
@@ -73,19 +105,46 @@ export function DiffPanel({ onRefresh }: DiffPanelProps) {
       const data = await res.json();
       
       if (res.ok) {
-        if (data.diff) {
+        setTaskId(data.taskId);
+      } else if (res.status === 409 && data.taskId) {
+        setTaskId(data.taskId);
+      } else {
+        if (res.status === 409 && data.diff) {
           setPendingDiff(data.diff);
           await loadDiffs();
-        } else {
-          alert(data.message || 'Различий не найдено');
         }
-      } else {
         alert(data.error || 'Ошибка создания diff');
       }
     } catch {
       alert('Ошибка сети');
     } finally {
       setIsCreating(false);
+    }
+  };
+
+  const stopCreatingDiff = async () => {
+    if (!taskId) {
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/diff?taskId=${taskId}`, {
+        method: 'DELETE',
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        alert(data.error || 'Ошибка остановки diff');
+        return;
+      }
+
+      setTaskId(null);
+      setLastStatus({
+        status: 'failed',
+        message: 'Создание diff остановлено пользователем',
+      });
+    } catch {
+      alert('Ошибка сети');
     }
   };
 
@@ -137,6 +196,46 @@ export function DiffPanel({ onRefresh }: DiffPanelProps) {
   const formatDate = (dateStr: string) => {
     return new Date(dateStr).toLocaleString('ru-RU');
   };
+
+  const formatDuration = (ms: number) => {
+    if (!Number.isFinite(ms) || ms <= 0) {
+      return 'меньше минуты';
+    }
+
+    const totalSeconds = Math.round(ms / 1000);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+
+    if (hours > 0) {
+      return `${hours}ч ${minutes}м`;
+    }
+    if (minutes > 0) {
+      return `${minutes}м ${seconds}с`;
+    }
+    return `${seconds}с`;
+  };
+
+  const formatBytes = (value: number) => {
+    let size = value;
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    let unitIndex = 0;
+
+    while (size >= 1024 && unitIndex < units.length - 1) {
+      size /= 1024;
+      unitIndex += 1;
+    }
+
+    return `${size.toFixed(size >= 100 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+  };
+
+  const displayProgress = progress ?? lastProgress;
+  const displayStatus = status ?? lastStatus;
+  const taskStartedAt = taskId?.startsWith('diff_task_') ? Number(taskId.slice('diff_task_'.length)) : NaN;
+  const elapsedMs = Number.isFinite(taskStartedAt) ? Math.max(Date.now() - taskStartedAt, 0) : 0;
+  const etaMs = isRunning && displayProgress && displayProgress.phase === 'archiving' && displayProgress.percent > 1
+    ? elapsedMs * (100 - displayProgress.percent) / displayProgress.percent
+    : null;
 
   const getNetworkById = (networkId: string): NetworkConfig | undefined => {
     return networks.find(n => n.id === networkId);
@@ -280,15 +379,67 @@ export function DiffPanel({ onRefresh }: DiffPanelProps) {
         </div>
       ) : (
         <div className="mb-6">
+          {(displayProgress || displayStatus) && (
+            <div className="mb-4 space-y-3">
+              <ProgressBar progress={displayProgress} status={displayStatus} isRunning={isRunning} />
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
+                <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+                  <div className="text-gray-500">Прошло</div>
+                  <div className="font-medium text-gray-900">{formatDuration(elapsedMs)}</div>
+                </div>
+                <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+                  <div className="text-gray-500">Осталось</div>
+                  <div className="font-medium text-gray-900">
+                    {etaMs !== null ? `примерно ${formatDuration(etaMs)}` : 'оценка появится после старта архивации'}
+                  </div>
+                </div>
+                <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+                  <div className="text-gray-500">Обработано</div>
+                  <div className="font-medium text-gray-900">
+                    {displayProgress?.processedBytes !== undefined && displayProgress.totalBytes !== undefined
+                      ? `${formatBytes(displayProgress.processedBytes)} / ${formatBytes(displayProgress.totalBytes)}`
+                      : displayProgress?.total
+                        ? `${displayProgress.current} / ${displayProgress.total} файлов`
+                        : 'подготовка списка файлов'}
+                  </div>
+                </div>
+              </div>
+
+              {isRunning && (
+                <div className="flex justify-end">
+                  <button
+                    onClick={stopCreatingDiff}
+                    className="inline-flex items-center gap-2 px-3 py-2 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+                  >
+                    <Square className="w-4 h-4" />
+                    Остановить создание diff
+                  </button>
+                </div>
+              )}
+
+              {logs && (
+                <details className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                  <summary className="cursor-pointer text-sm font-medium text-gray-700">
+                    Логи выполнения
+                  </summary>
+                  <pre className="mt-3 max-h-48 overflow-y-auto rounded border border-gray-200 bg-white p-3 text-xs text-gray-700 font-mono whitespace-pre-wrap break-all">
+                    {logs.split('\n').slice(-30).join('\n')}
+                  </pre>
+                </details>
+              )}
+            </div>
+          )}
+
           <button
             onClick={createDiff}
-            disabled={isCreating}
+            disabled={isCreating || isRunning}
             className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors"
           >
-            {isCreating ? (
+            {isCreating || isRunning ? (
               <>
                 <RefreshCw className="w-4 h-4 animate-spin" />
-                Создание diff...
+                {isRunning ? 'Diff создаётся...' : 'Запуск создания diff...'}
               </>
             ) : (
               <>

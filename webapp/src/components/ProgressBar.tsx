@@ -8,6 +8,9 @@ interface ProgressBarProps {
     total: number;
     percent: number;
     currentPackage?: string;
+    currentFile?: string;
+    processedBytes?: number;
+    totalBytes?: number;
     success?: number;
     failed?: number;
     broken?: number;
@@ -25,6 +28,19 @@ export function ProgressBar({ progress, status, isRunning }: ProgressBarProps) {
   if (!progress && !status) {
     return null;
   }
+
+  const formatBytes = (value: number) => {
+    let size = value;
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    let unitIndex = 0;
+
+    while (size >= 1024 && unitIndex < units.length - 1) {
+      size /= 1024;
+      unitIndex += 1;
+    }
+
+    return `${size.toFixed(size >= 100 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+  };
 
   const getStatusIcon = () => {
     if (isRunning) {
@@ -87,12 +103,23 @@ export function ProgressBar({ progress, status, isRunning }: ProgressBarProps) {
           
           <div className="flex justify-between text-sm text-gray-500">
             <span>{progress.percent.toFixed(1)}%</span>
-            {progress.currentPackage && (
+            {(progress.currentPackage || progress.currentFile) && (
               <span className="truncate max-w-xs">
-                {progress.currentPackage}
+                {progress.currentPackage || progress.currentFile}
               </span>
             )}
           </div>
+
+          {(progress.phase || (progress.processedBytes !== undefined && progress.totalBytes !== undefined)) && (
+            <div className="flex flex-wrap justify-between gap-2 text-xs text-gray-500">
+              <span>{progress.phase || 'processing'}</span>
+              {progress.processedBytes !== undefined && progress.totalBytes !== undefined && progress.totalBytes > 0 && (
+                <span>
+                  {formatBytes(progress.processedBytes)} / {formatBytes(progress.totalBytes)}
+                </span>
+              )}
+            </div>
+          )}
 
           {(progress.success !== undefined || progress.failed !== undefined) && (
             <div className="flex gap-4 text-sm">
