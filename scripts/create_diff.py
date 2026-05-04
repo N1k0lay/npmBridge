@@ -125,13 +125,16 @@ def get_last_diff_time() -> str | None:
 def get_diff_files(since_time: str | None) -> list[tuple[str, Path]]:
     storage_path = Path(STORAGE_DIR)
     exclude_names = {'.sinopia-db.json', '.verdaccio-db.json', '.DS_Store'}
+    include_patterns = ('*.tgz', 'package.json')
 
     if since_time is None:
         diff_files = []
-        for src_file in storage_path.rglob('*.tgz'):
-            if src_file.name in exclude_names:
-                continue
-            diff_files.append((str(src_file.relative_to(storage_path)), src_file))
+        for pattern in include_patterns:
+            for src_file in storage_path.rglob(pattern):
+                if src_file.name in exclude_names:
+                    continue
+                diff_files.append((str(src_file.relative_to(storage_path)), src_file))
+        diff_files.sort(key=lambda item: item[0])
         return diff_files
 
     try:
@@ -142,7 +145,16 @@ def get_diff_files(since_time: str | None) -> list[tuple[str, Path]]:
 
     try:
         result = subprocess.run(
-            ['find', str(storage_path), '-name', '*.tgz', '-newermt', since_str],
+            [
+                'find',
+                str(storage_path),
+                '(',
+                '-name', '*.tgz',
+                '-o',
+                '-name', 'package.json',
+                ')',
+                '-newermt', since_str,
+            ],
             capture_output=True,
             text=True,
             timeout=60,
@@ -157,16 +169,19 @@ def get_diff_files(since_time: str | None) -> list[tuple[str, Path]]:
                 diff_files.append((str(src_file.relative_to(storage_path)), src_file))
             except ValueError:
                 continue
+        diff_files.sort(key=lambda item: item[0])
         return diff_files
     except Exception as error:
         log('ERROR', f'find command failed: {error}, falling back to full scan')
         since_ts = datetime.fromisoformat(since_time.replace('Z', '+00:00')).timestamp()
         diff_files = []
-        for src_file in storage_path.rglob('*.tgz'):
-            if src_file.name in exclude_names:
-                continue
-            if src_file.stat().st_mtime > since_ts:
-                diff_files.append((str(src_file.relative_to(storage_path)), src_file))
+        for pattern in include_patterns:
+            for src_file in storage_path.rglob(pattern):
+                if src_file.name in exclude_names:
+                    continue
+                if src_file.stat().st_mtime > since_ts:
+                    diff_files.append((str(src_file.relative_to(storage_path)), src_file))
+        diff_files.sort(key=lambda item: item[0])
         return diff_files
 
 
