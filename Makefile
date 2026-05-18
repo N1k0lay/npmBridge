@@ -42,6 +42,12 @@ help:
 # ─────────────────────────────────────────────
 deploy:
 	ssh $(PROD_HOST) "cd $(PROD_DIR) && \
+		if [ -n \"\$$(git status --porcelain)\" ]; then \
+			echo '[prod] deploy aborted: working tree is dirty'; \
+			echo '[prod] resolve remote changes first or use make deploy-local'; \
+			git status --short; \
+			exit 2; \
+		fi && \
 		git pull && \
 		docker compose build webapp && \
 		docker compose up -d && \
