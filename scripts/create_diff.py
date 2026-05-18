@@ -4,7 +4,6 @@
 import json
 import os
 import signal
-import subprocess
 import sys
 import tarfile
 from datetime import datetime, timezone
@@ -12,6 +11,7 @@ from pathlib import Path
 from threading import Lock
 
 STORAGE_DIR = os.environ.get('STORAGE_DIR', './storage')
+FROZEN_DIR = os.environ.get('FROZEN_DIR', './frozen')
 DIFF_ARCHIVES_DIR = os.environ.get('DIFF_ARCHIVES_DIR', './diff_archives')
 DIFF_ID = os.environ.get('DIFF_ID', f"diff_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
 
@@ -122,67 +122,56 @@ def get_last_diff_time() -> str | None:
     return None
 
 
-def get_diff_files(since_time: str | None) -> list[tuple[str, Path]]:
-    storage_path = Path(STORAGE_DIR)
+def iter_storage_files(storage_path: Path) -> list[tuple[str, Path]]:
     exclude_names = {'.sinopia-db.json', '.verdaccio-db.json', '.DS_Store'}
     include_patterns = ('*.tgz', 'package.json')
 
-    if since_time is None:
-        diff_files = []
-        for pattern in include_patterns:
-            for src_file in storage_path.rglob(pattern):
-                if src_file.name in exclude_names:
-                    continue
-                diff_files.append((str(src_file.relative_to(storage_path)), src_file))
-        diff_files.sort(key=lambda item: item[0])
-        return diff_files
+    diff_files = []
+    for pattern in include_patterns:
+        for src_file in storage_path.rglob(pattern):
+            if src_file.name in exclude_names:
+                continue
+            diff_files.append((str(src_file.relative_to(storage_path)), src_file))
+    diff_files.sort(key=lambda item: item[0])
+    return diff_files
+
+
+def files_differ(src_file: Path, frozen_file: Path) -> bool:
+    try:
+        src_stat = src_file.stat()
+        frozen_stat = frozen_file.stat()
+    except FileNotFoundError:
+        return True
+
+    if src_stat.st_size != frozen_stat.st_size:
+        return True
+
+    if src_file.name != 'package.json':
+        return False
 
     try:
-        dt = datetime.fromisoformat(since_time.replace('Z', '+00:00'))
-        since_str = dt.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S')
-    except Exception:
-        since_str = since_time
+        with open(src_file, 'rb') as src_obj, open(frozen_file, 'rb') as frozen_obj:
+            while True:
+                src_chunk = src_obj.read(65536)
+                frozen_chunk = frozen_obj.read(65536)
+                if src_chunk != frozen_chunk:
+                    return True
+                if not src_chunk:
+                    return False
+    except FileNotFoundError:
+        return True
 
-    try:
-        result = subprocess.run(
-            [
-                'find',
-                str(storage_path),
-                '(',
-                '-name', '*.tgz',
-                '-o',
-                '-name', 'package.json',
-                ')',
-                '-newermt', since_str,
-            ],
-            capture_output=True,
-            text=True,
-            timeout=60,
-            check=False,
-        )
-        diff_files = []
-        for line in result.stdout.splitlines():
-            src_file = Path(line.strip())
-            if not line or src_file.name in exclude_names:
-                continue
-            try:
-                diff_files.append((str(src_file.relative_to(storage_path)), src_file))
-            except ValueError:
-                continue
-        diff_files.sort(key=lambda item: item[0])
-        return diff_files
-    except Exception as error:
-        log('ERROR', f'find command failed: {error}, falling back to full scan')
-        since_ts = datetime.fromisoformat(since_time.replace('Z', '+00:00')).timestamp()
-        diff_files = []
-        for pattern in include_patterns:
-            for src_file in storage_path.rglob(pattern):
-                if src_file.name in exclude_names:
-                    continue
-                if src_file.stat().st_mtime > since_ts:
-                    diff_files.append((str(src_file.relative_to(storage_path)), src_file))
-        diff_files.sort(key=lambda item: item[0])
-        return diff_files
+
+def get_diff_files() -> list[tuple[str, Path]]:
+    storage_path = Path(STORAGE_DIR)
+    frozen_path = Path(FROZEN_DIR)
+
+    diff_files = []
+    for rel_path, src_file in iter_storage_files(storage_path):
+        frozen_file = frozen_path / rel_path
+        if not frozen_file.exists() or files_differ(src_file, frozen_file):
+            diff_files.append((rel_path, src_file))
+    return diff_files
 
 
 def format_size(size_bytes: int) -> str:
@@ -219,11 +208,11 @@ def main():
     else:
         log('INFO', 'Full diff (no previous diffs found)')
 
-    log('INFO', 'Analyzing differences...')
+    log('INFO', 'Analyzing differences against frozen snapshot...')
     update_status('running', 'Анализ новых пакетов...')
     update_progress('analyzing', 0, 0)
 
-    diff_files = get_diff_files(since_time)
+    diff_files = get_diff_files()
     total_files = len(diff_files)
     created_at = datetime.now(timezone.utc).isoformat()
 

@@ -38,7 +38,7 @@
 - [x] `update_recent.py` — обновление недавно изменённых
 - [x] `check_broken.py` — проверка целостности `.tgz`
 - [x] `fix_broken.py` — переустановка битых архивов
-- [x] `create_diff.py` — создание diff-архива (storage vs frozen)
+- [x] `create_diff.py` — создание diff-архива (storage vs frozen), сравнение идёт по реальной разнице snapshot, а не по mtime последнего diff
 - [x] `sync_frozen.py` — синхронизация frozen после переноса
 
 #### Логика состояний
