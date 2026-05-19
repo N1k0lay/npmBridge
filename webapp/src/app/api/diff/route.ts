@@ -15,8 +15,6 @@ import {
   getDiffs, 
   getDiff,
   getPendingDiff,
-  hasDiffStorageChanges,
-  markDiffPending,
   markDiffTransferredToNetwork,
   markDiffOutdated,
   checkDiffOutdated,
@@ -76,17 +74,6 @@ export async function GET(request: Request) {
     getPendingDiff(),
     listTaskHistory('diff_task_', 20),
   ]);
-
-  if (!pendingDiff) {
-    const latestDiff = diffs[0];
-    if (latestDiff?.status === 'outdated') {
-      const hasChanges = await hasDiffStorageChanges(latestDiff.id);
-      if (!hasChanges) {
-        await markDiffPending(latestDiff.id);
-        latestDiff.status = latestDiff.transfers.length > 0 ? 'partial' : 'pending';
-      }
-    }
-  }
   
   return NextResponse.json({
     diffs: diffs.slice(0, 50),

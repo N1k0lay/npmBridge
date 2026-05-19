@@ -123,7 +123,12 @@ def get_last_diff_time() -> str | None:
     if not archives_path.exists():
         return None
 
-    json_files = sorted(archives_path.glob('diff_*.json'))
+    json_files = sorted(
+        path_obj
+        for path_obj in archives_path.glob('diff_*.json')
+        if not path_obj.name.endswith('_snapshot.json')
+        and not path_obj.name.endswith('_package_json_report.json')
+    )
     for json_file in reversed(json_files):
         try:
             with open(json_file, encoding='utf-8') as file_obj:
@@ -161,7 +166,12 @@ def ensure_baseline_manifest(created_at: str, since_time: str | None) -> dict[st
             return baseline_manifest
 
     archives_path = Path(DIFF_ARCHIVES_DIR)
-    diff_meta_files = sorted(archives_path.glob('diff_*.json'))
+    diff_meta_files = sorted(
+        path_obj
+        for path_obj in archives_path.glob('diff_*.json')
+        if not path_obj.name.endswith('_snapshot.json')
+        and not path_obj.name.endswith('_package_json_report.json')
+    )
     for diff_meta_path in reversed(diff_meta_files):
         try:
             with open(diff_meta_path, encoding='utf-8') as file_obj:

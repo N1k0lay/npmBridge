@@ -125,6 +125,12 @@ function diffMetaPath(diffId: string): string {
   return path.join(config.diffArchivesDir, `${diffId}.json`);
 }
 
+function isDiffMetaFile(fileName: string): boolean {
+  return /^diff_\d{4}-\d{2}-\d{2}T.+\.json$/i.test(fileName)
+    && !fileName.endsWith('_snapshot.json')
+    && !fileName.endsWith('_package_json_report.json');
+}
+
 function updatePath(id: string): string {
   return path.join(config.dataDir, 'updates', `${id}.json`);
 }
@@ -205,7 +211,7 @@ async function readAllDiffs(): Promise<StoredDiff[]> {
     return [];
   }
 
-  const jsonFiles = files.filter(f => f.endsWith('.json') && !f.endsWith('.tmp'));
+  const jsonFiles = files.filter(isDiffMetaFile);
   const results: StoredDiff[] = [];
 
   for (const file of jsonFiles) {
