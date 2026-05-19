@@ -143,6 +143,7 @@ export async function POST(_request: Request) {
         archiveSize: number;
         archiveSizeHuman: string;
         filesCount: number;
+        snapshotManifestPath?: string | null;
         sinceTime?: string | null;
         storageSnapshotTime: string;
       };
@@ -161,6 +162,7 @@ export async function POST(_request: Request) {
         archiveSize: diffResult.archiveSize,
         archiveSizeHuman: diffResult.archiveSizeHuman,
         filesCount: diffResult.filesCount,
+        snapshotManifestPath: diffResult.snapshotManifestPath || null,
         sinceTime: diffResult.sinceTime || null,
         storageSnapshotTime: diffResult.storageSnapshotTime,
       };

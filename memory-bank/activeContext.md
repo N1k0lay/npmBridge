@@ -12,6 +12,18 @@
 2. Для `package.json` добавлена проверка содержимого, чтобы ловить изменения даже при одинаковом пути
 3. Добавлен регрессионный тест `scripts/tests/test_create_diff.py` на сценарий: файл отсутствует в `frozen/`, но его mtime старее `createdAt` последнего diff
 
+### Постфикс (2026-05-18): baseline diff переведён с frozen на snapshot manifest
+
+**Решение**: baseline состояния теперь хранится в `data/snapshot-manifest.json`, а не в физической директории `frozen/`.
+
+**Как работает**:
+1. `scripts/create_diff.py` сравнивает `storage/` с snapshot manifest baseline
+2. При создании diff рядом с архивом пишется полный snapshot текущего `storage/` в `diff_archives/{diffId}_snapshot.json`
+3. Когда diff полностью подтверждён для всех сетей, его snapshot manifest продвигается в baseline `data/snapshot-manifest.json`
+4. Если baseline manifest ещё не существует, первый запуск автоматически bootstrap'ит его из старой директории `frozen/`
+
+**Следствие**: `frozen/` остаётся только как одноразовый источник миграции старого baseline; дальнейшая логика diff должна опираться на manifest JSON
+
 ### Постфикс (2026-04-30): скачивание больших diff-архивов
 
 **Проблема**: endpoint скачивания diff падал с 500 на больших архивах.

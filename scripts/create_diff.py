@@ -10,9 +10,23 @@ from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
 
+from lib.snapshot_manifest import (
+    build_file_entry,
+    build_snapshot_manifest_from_archives,
+    build_snapshot_manifest,
+    iter_storage_files,
+    load_snapshot_manifest,
+    manifest_entry_differs,
+)
+
 STORAGE_DIR = os.environ.get('STORAGE_DIR', './storage')
 FROZEN_DIR = os.environ.get('FROZEN_DIR', './frozen')
+DATA_DIR = os.environ.get('DATA_DIR', './data')
 DIFF_ARCHIVES_DIR = os.environ.get('DIFF_ARCHIVES_DIR', './diff_archives')
+SNAPSHOT_MANIFEST_FILE = os.environ.get(
+    'SNAPSHOT_MANIFEST_FILE',
+    str(Path(DATA_DIR) / 'snapshot-manifest.json'),
+)
 DIFF_ID = os.environ.get('DIFF_ID', f"diff_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
 
 PROGRESS_FILE = os.environ.get('PROGRESS_FILE', '/tmp/diff_progress.json')
@@ -122,56 +136,95 @@ def get_last_diff_time() -> str | None:
     return None
 
 
-def iter_storage_files(storage_path: Path) -> list[tuple[str, Path]]:
-    exclude_names = {'.sinopia-db.json', '.verdaccio-db.json', '.DS_Store'}
-    include_patterns = ('*.tgz', 'package.json')
+def ensure_baseline_manifest(created_at: str, since_time: str | None) -> dict[str, object] | None:
+    manifest_path = Path(SNAPSHOT_MANIFEST_FILE)
+    baseline_manifest = load_snapshot_manifest(manifest_path)
+    if baseline_manifest is not None:
+        return baseline_manifest
 
-    diff_files = []
-    for pattern in include_patterns:
-        for src_file in storage_path.rglob(pattern):
-            if src_file.name in exclude_names:
-                continue
-            diff_files.append((str(src_file.relative_to(storage_path)), src_file))
-    diff_files.sort(key=lambda item: item[0])
-    return diff_files
-
-
-def files_differ(src_file: Path, frozen_file: Path) -> bool:
-    try:
-        src_stat = src_file.stat()
-        frozen_stat = frozen_file.stat()
-    except FileNotFoundError:
-        return True
-
-    if src_stat.st_size != frozen_stat.st_size:
-        return True
-
-    if src_file.name != 'package.json':
-        return False
-
-    try:
-        with open(src_file, 'rb') as src_obj, open(frozen_file, 'rb') as frozen_obj:
-            while True:
-                src_chunk = src_obj.read(65536)
-                frozen_chunk = frozen_obj.read(65536)
-                if src_chunk != frozen_chunk:
-                    return True
-                if not src_chunk:
-                    return False
-    except FileNotFoundError:
-        return True
-
-
-def get_diff_files() -> list[tuple[str, Path]]:
-    storage_path = Path(STORAGE_DIR)
     frozen_path = Path(FROZEN_DIR)
+    if frozen_path.exists():
+        has_snapshot_files = any(iter_storage_files(frozen_path))
+        if has_snapshot_files:
+            baseline_manifest = build_snapshot_manifest(
+                frozen_path,
+                'migrated_from_frozen',
+                None,
+                since_time or created_at,
+                created_at,
+            )
+            manifest_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(manifest_path, 'w', encoding='utf-8') as file_obj:
+                json.dump(baseline_manifest, file_obj, ensure_ascii=True, indent=2)
+
+            log('INFO', f'Bootstrapped snapshot manifest from frozen: {manifest_path}')
+            return baseline_manifest
+
+    archives_path = Path(DIFF_ARCHIVES_DIR)
+    diff_meta_files = sorted(archives_path.glob('diff_*.json'))
+    for diff_meta_path in reversed(diff_meta_files):
+        try:
+            with open(diff_meta_path, encoding='utf-8') as file_obj:
+                diff_meta = json.load(file_obj)
+        except Exception:
+            continue
+
+        if not diff_meta.get('id'):
+            continue
+        if diff_meta.get('status') != 'transferred':
+            continue
+        if diff_meta.get('sinceTime') is not None:
+            continue
+
+        diff_id = diff_meta['id']
+        diff_archive_path = archives_path / f'{diff_id}.tar.gz'
+        package_json_archive_path = archives_path / f'{diff_id}_package_json.tar.gz'
+        if not diff_archive_path.exists() or not package_json_archive_path.exists():
+            continue
+
+        baseline_manifest = build_snapshot_manifest_from_archives(
+            diff_archive_path,
+            package_json_archive_path,
+            f'{diff_id}_baseline',
+            diff_id,
+            diff_meta.get('createdAt'),
+            diff_meta.get('storageSnapshotTime') or created_at,
+        )
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(manifest_path, 'w', encoding='utf-8') as file_obj:
+            json.dump(baseline_manifest, file_obj, ensure_ascii=True, indent=2)
+
+        log('INFO', f'Bootstrapped snapshot manifest from transferred diff archive: {diff_id}')
+        return baseline_manifest
+
+    return None
+
+
+def get_diff_files(created_at: str) -> tuple[list[tuple[str, Path]], dict[str, object]]:
+    storage_path = Path(STORAGE_DIR)
+    since_time = get_last_diff_time()
+    baseline_manifest = ensure_baseline_manifest(created_at, since_time)
+    baseline_files = baseline_manifest.get('files', {}) if baseline_manifest else {}
 
     diff_files = []
+    current_files: dict[str, dict[str, str | int]] = {}
+
     for rel_path, src_file in iter_storage_files(storage_path):
-        frozen_file = frozen_path / rel_path
-        if not frozen_file.exists() or files_differ(src_file, frozen_file):
+        current_entry = build_file_entry(src_file)
+        current_files[rel_path] = current_entry
+        baseline_entry = baseline_files.get(rel_path) if isinstance(baseline_files, dict) else None
+        if manifest_entry_differs(current_entry, baseline_entry):
             diff_files.append((rel_path, src_file))
-    return diff_files
+
+    current_manifest = {
+        'version': 1,
+        'snapshotId': f'{DIFF_ID}_snapshot',
+        'createdAt': created_at,
+        'syncedAt': None,
+        'sourceDiffId': DIFF_ID,
+        'files': current_files,
+    }
+    return diff_files, current_manifest
 
 
 def format_size(size_bytes: int) -> str:
@@ -208,13 +261,13 @@ def main():
     else:
         log('INFO', 'Full diff (no previous diffs found)')
 
-    log('INFO', 'Analyzing differences against frozen snapshot...')
+    log('INFO', f'Analyzing differences against snapshot manifest: {SNAPSHOT_MANIFEST_FILE}')
     update_status('running', 'Анализ новых пакетов...')
     update_progress('analyzing', 0, 0)
 
-    diff_files = get_diff_files()
-    total_files = len(diff_files)
     created_at = datetime.now(timezone.utc).isoformat()
+    diff_files, current_manifest = get_diff_files(created_at)
+    total_files = len(diff_files)
 
     if total_files == 0:
         log('INFO', 'No new packages found')
@@ -225,6 +278,7 @@ def main():
             'archivePath': None,
             'archiveSize': 0,
             'archiveSizeHuman': '0 B',
+            'snapshotManifestPath': None,
             'sinceTime': since_time,
             'storageSnapshotTime': created_at,
         }))
@@ -235,10 +289,14 @@ def main():
     total_bytes = sum(src_file.stat().st_size for _, src_file in diff_files)
 
     archive_path = archives_path / f'{DIFF_ID}.tar.gz'
+    snapshot_manifest_path = archives_path / f'{DIFF_ID}_snapshot.json'
     current_archive_tmp = archives_path / f'{DIFF_ID}.tar.gz.partial'
     processed_bytes = 0
 
     try:
+        with open(snapshot_manifest_path, 'w', encoding='utf-8') as file_obj:
+            json.dump(current_manifest, file_obj, ensure_ascii=True, indent=2)
+
         with tarfile.open(current_archive_tmp, 'w:gz') as tar_obj:
             for index, (rel_path, src_file) in enumerate(diff_files, 1):
                 if cancel_requested:
@@ -277,6 +335,7 @@ def main():
         'archivePath': str(archive_path),
         'archiveSize': archive_size,
         'archiveSizeHuman': archive_size_human,
+        'snapshotManifestPath': str(snapshot_manifest_path),
         'sinceTime': since_time,
         'storageSnapshotTime': created_at,
     }))

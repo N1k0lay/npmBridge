@@ -11,10 +11,13 @@ export interface AppConfig {
   readonly scriptsDir: string;
   readonly dataDir: string;
   readonly logsDir: string;
+  readonly snapshotManifestFile: string;
   readonly pnpmCmd: string;
   parallelJobs: number;
   modifiedMinutes: number;
 }
+
+const dataDir = process.env.DATA_DIR || '/home/npm/verdaccio/data';
 
 // Конфигурация из переменных окружения
 export const config: AppConfig = {
@@ -23,8 +26,9 @@ export const config: AppConfig = {
   frozenDir: process.env.FROZEN_DIR || '/home/npm/verdaccio/frozen',
   diffArchivesDir: process.env.DIFF_ARCHIVES_DIR || '/home/npm/verdaccio/diff_archives',
   scriptsDir: process.env.SCRIPTS_DIR || '/home/npm/verdaccio/scripts',
-  dataDir: process.env.DATA_DIR || '/home/npm/verdaccio/data',
+  dataDir,
   logsDir: process.env.LOGS_DIR || '/home/npm/verdaccio/logs',
+  snapshotManifestFile: process.env.SNAPSHOT_MANIFEST_FILE || path.join(dataDir, 'snapshot-manifest.json'),
   pnpmCmd: process.env.PNPM_CMD || 'pnpm',
   parallelJobs: parseInt(process.env.PARALLEL_JOBS || '40', 10),
   modifiedMinutes: parseInt(process.env.MODIFIED_MINUTES || '2880', 10),
@@ -96,6 +100,8 @@ export async function runScript(
     STORAGE_DIR: config.storageDir,
     FROZEN_DIR: config.frozenDir,
     DIFF_ARCHIVES_DIR: config.diffArchivesDir,
+    DATA_DIR: config.dataDir,
+    SNAPSHOT_MANIFEST_FILE: config.snapshotManifestFile,
     PNPM_CMD: config.pnpmCmd,
     PARALLEL_JOBS: config.parallelJobs.toString(),
     MODIFIED_MINUTES: config.modifiedMinutes.toString(),

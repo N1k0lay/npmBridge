@@ -16,6 +16,7 @@ import fsp from 'fs/promises';
 import path from 'path';
 import { execFileSync } from 'child_process';
 import { config } from './scripts';
+import { hasStorageChangesSinceSnapshot, promoteSnapshotManifest } from './snapshotManifest';
 
 // ─────────────────────────────────────────────
 // Константы
@@ -43,6 +44,7 @@ export interface DiffRecord {
   archiveSizeHuman: string;
   filesCount: number;
   storageSnapshotTime: string;
+  snapshotManifestPath: string | null;
 }
 
 export interface UpdateRecord {
@@ -145,6 +147,7 @@ interface StoredDiff {
   archiveSizeHuman: string;
   filesCount: number;
   storageSnapshotTime: string;
+  snapshotManifestPath: string | null;
   /** { networkId: transferredAt } */
   transfers: Record<string, string>;
 }
@@ -160,6 +163,7 @@ function storedToDiffRecord(d: StoredDiff): DiffRecord {
     archiveSizeHuman: d.archiveSizeHuman,
     filesCount: d.filesCount,
     storageSnapshotTime: d.storageSnapshotTime,
+    snapshotManifestPath: d.snapshotManifestPath ?? null,
     transfers: Object.entries(d.transfers || {}).map(([networkId, transferredAt]) => ({
       networkId,
       transferredAt,
@@ -182,6 +186,7 @@ function diffRecordToStored(r: DiffRecord, sinceTime: string | null): StoredDiff
     archiveSizeHuman: r.archiveSizeHuman,
     filesCount: r.filesCount,
     storageSnapshotTime: r.storageSnapshotTime,
+    snapshotManifestPath: r.snapshotManifestPath,
     transfers,
   };
 }
@@ -241,6 +246,9 @@ export async function addDiff(diff: DiffRecord): Promise<void> {
     if (d.status === 'transferred') {
       deleteFileSilent(d.archivePath);
       deleteFileSilent(d.archivePath.replace('.tar.gz', '_files.json'));
+      if (d.snapshotManifestPath) {
+        deleteFileSilent(d.snapshotManifestPath);
+      }
     }
   }
 
@@ -282,6 +290,10 @@ export async function markDiffTransferredToNetwork(
     allNetworks.length > 0 &&
     allNetworks.every(n => Object.prototype.hasOwnProperty.call(raw.transfers, n.id));
 
+  if (allTransferred && raw.snapshotManifestPath) {
+    await promoteSnapshotManifest(raw.snapshotManifestPath);
+  }
+
   raw.status = allTransferred ? 'transferred' : 'partial';
 
   await writeJsonAsync(diffMetaPath(diffId), raw);
@@ -292,6 +304,9 @@ export async function markDiffTransferred(id: string): Promise<boolean> {
   const raw = await readJsonOrNull<StoredDiff>(diffMetaPath(id));
   if (!raw?.id) return false;
   if (raw.status === 'transferred' || raw.status === 'outdated') return false;
+  if (raw.snapshotManifestPath) {
+    await promoteSnapshotManifest(raw.snapshotManifestPath);
+  }
   raw.status = 'transferred';
   await writeJsonAsync(diffMetaPath(id), raw);
   return true;
@@ -311,7 +326,11 @@ export async function markDiffOutdated(id: string): Promise<boolean> {
  */
 export async function checkDiffOutdated(diffId: string): Promise<boolean> {
   const raw = await readJsonOrNull<StoredDiff>(diffMetaPath(diffId));
-  if (!raw?.id || raw.status !== 'pending') return false;
+  if (!raw?.id || (raw.status !== 'pending' && raw.status !== 'partial')) return false;
+
+  if (raw.snapshotManifestPath) {
+    return hasStorageChangesSinceSnapshot(raw.snapshotManifestPath);
+  }
 
   // find -newermt принимает datetime в формате "YYYY-MM-DDTHH:MM:SS" на Linux
   const sinceIso = raw.createdAt.replace('Z', '').slice(0, 19);

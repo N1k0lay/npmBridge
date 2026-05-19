@@ -40,6 +40,7 @@
 - [x] `fix_broken.py` — переустановка битых архивов
 - [x] `create_diff.py` — создание diff-архива (storage vs frozen), сравнение идёт по реальной разнице snapshot, а не по mtime последнего diff
 - [x] `sync_frozen.py` — синхронизация frozen после переноса
+- [x] baseline diff переведён на `snapshot-manifest.json`; `frozen/` используется только для bootstrap-миграции старого baseline
 
 #### Логика состояний
 - [x] Статусы diff: `pending` → `partial` → `transferred` / `outdated`

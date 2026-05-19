@@ -6,6 +6,7 @@ export async function GET() {
     verdaccioHome: config.verdaccioHome,
     storageDir: config.storageDir,
     frozenDir: config.frozenDir,
+    snapshotManifestFile: config.snapshotManifestFile,
     diffArchivesDir: config.diffArchivesDir,
     parallelJobs: config.parallelJobs,
     modifiedMinutes: config.modifiedMinutes,
