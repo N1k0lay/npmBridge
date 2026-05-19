@@ -26,6 +26,7 @@ interface TaskHistoryListProps {
   tasks: TaskHistoryItem[];
   emptyText: string;
   getLabel?: (task: TaskHistoryItem) => string;
+  isLoading?: boolean;
 }
 
 function getErrorLines(logs: string): string[] {
@@ -73,7 +74,7 @@ function getStatusText(status: string | undefined) {
   }
 }
 
-export function TaskHistoryList({ title, tasks, emptyText, getLabel }: TaskHistoryListProps) {
+export function TaskHistoryList({ title, tasks, emptyText, getLabel, isLoading = false }: TaskHistoryListProps) {
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
   const [loadedLogs, setLoadedLogs] = useState<Record<string, LoadedLogState>>({});
 
@@ -139,7 +140,9 @@ export function TaskHistoryList({ title, tasks, emptyText, getLabel }: TaskHisto
     <div>
       <h3 className="font-medium mb-3">{title}</h3>
 
-      {tasks.length === 0 ? (
+      {isLoading ? (
+        <div className="text-center py-4 text-gray-500">Загрузка...</div>
+      ) : tasks.length === 0 ? (
         <div className="text-center py-4 text-gray-500">{emptyText}</div>
       ) : (
         <div className="space-y-2 max-h-72 overflow-y-auto">

@@ -460,6 +460,7 @@ export function DiffPanel({ onRefresh }: DiffPanelProps) {
           tasks={recentTasks}
           emptyText="Запусков создания diff пока не было"
           getLabel={() => 'Создание diff'}
+          isLoading={isLoading}
         />
       </div>
 
@@ -508,15 +509,13 @@ export function DiffPanel({ onRefresh }: DiffPanelProps) {
                   )}
                 </div>
                 
-                {diff.status !== 'outdated' && (
-                  <button
-                    onClick={() => downloadDiff(diff.id)}
-                    className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded-lg"
-                    title="Скачать"
-                  >
-                    <Download className="w-4 h-4" />
-                  </button>
-                )}
+                <button
+                  onClick={() => downloadDiff(diff.id)}
+                  className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded-lg"
+                  title="Скачать"
+                >
+                  <Download className="w-4 h-4" />
+                </button>
               </div>
             ))}
           </div>

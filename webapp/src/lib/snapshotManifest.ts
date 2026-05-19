@@ -41,12 +41,36 @@ async function hashFile(filePath: string): Promise<string> {
   });
 }
 
+function normalizeMtime(mtimeMs: number): string {
+  return new Date(Math.floor(mtimeMs)).toISOString();
+}
+
+function parseSnapshotMtime(value: string | undefined): number | null {
+  if (!value) {
+    return null;
+  }
+
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+function tgzMtimeDiffers(currentMtime: string, baselineMtime?: string): boolean {
+  const currentMs = parseSnapshotMtime(currentMtime);
+  const baselineMs = parseSnapshotMtime(baselineMtime);
+
+  if (currentMs === null || baselineMs === null) {
+    return currentMtime !== baselineMtime;
+  }
+
+  return Math.abs(currentMs - baselineMs) > 1;
+}
+
 async function buildCurrentEntry(filePath: string, statResult: fs.Stats): Promise<SnapshotFileEntry> {
   const kind: SnapshotFileEntry['kind'] = path.basename(filePath) === 'package.json' ? 'package.json' : 'tgz';
   const entry: SnapshotFileEntry = {
     kind,
     size: statResult.size,
-    mtime: statResult.mtime.toISOString(),
+    mtime: normalizeMtime(statResult.mtimeMs),
   };
 
   if (kind === 'package.json') {
@@ -63,7 +87,7 @@ function entryDiffers(current: SnapshotFileEntry, baseline?: SnapshotFileEntry):
   if (current.kind === 'package.json') {
     return baseline.sha256 !== current.sha256;
   }
-  return baseline.mtime !== current.mtime;
+  return tgzMtimeDiffers(current.mtime, baseline.mtime);
 }
 
 async function walkStorage(dirPath: string, visit: (filePath: string, statResult: fs.Stats) => Promise<boolean>): Promise<boolean> {

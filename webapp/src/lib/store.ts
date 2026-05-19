@@ -320,19 +320,22 @@ export async function markDiffOutdated(id: string): Promise<boolean> {
   return true;
 }
 
-/**
- * Проверяет устаревание diff: есть ли .tgz в storage с mtime > diff.createdAt?
- * Использует `find -newermt` — выходит при первом совпадении, быстро на 46K файлов.
- */
-export async function checkDiffOutdated(diffId: string): Promise<boolean> {
+export async function markDiffPending(id: string): Promise<boolean> {
+  const raw = await readJsonOrNull<StoredDiff>(diffMetaPath(id));
+  if (!raw?.id) return false;
+  raw.status = Object.keys(raw.transfers || {}).length > 0 ? 'partial' : 'pending';
+  await writeJsonAsync(diffMetaPath(id), raw);
+  return true;
+}
+
+export async function hasDiffStorageChanges(diffId: string): Promise<boolean> {
   const raw = await readJsonOrNull<StoredDiff>(diffMetaPath(diffId));
-  if (!raw?.id || (raw.status !== 'pending' && raw.status !== 'partial')) return false;
+  if (!raw?.id) return false;
 
   if (raw.snapshotManifestPath) {
     return hasStorageChangesSinceSnapshot(raw.snapshotManifestPath);
   }
 
-  // find -newermt принимает datetime в формате "YYYY-MM-DDTHH:MM:SS" на Linux
   const sinceIso = raw.createdAt.replace('Z', '').slice(0, 19);
 
   try {
@@ -345,6 +348,17 @@ export async function checkDiffOutdated(diffId: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/**
+ * Проверяет устаревание diff: есть ли .tgz в storage с mtime > diff.createdAt?
+ * Использует `find -newermt` — выходит при первом совпадении, быстро на 46K файлов.
+ */
+export async function checkDiffOutdated(diffId: string): Promise<boolean> {
+  const raw = await readJsonOrNull<StoredDiff>(diffMetaPath(diffId));
+  if (!raw?.id || (raw.status !== 'pending' && raw.status !== 'partial')) return false;
+
+  return hasDiffStorageChanges(diffId);
 }
 
 // ─────────────────────────────────────────────
