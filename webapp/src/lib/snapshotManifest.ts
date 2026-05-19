@@ -1,5 +1,3 @@
-import { createHash } from 'crypto';
-import fs from 'fs';
 import fsp from 'fs/promises';
 import path from 'path';
 import { config } from './scripts';
@@ -30,67 +28,7 @@ async function readSnapshotManifest(manifestPath: string): Promise<SnapshotManif
     return null;
   }
 }
-
-async function hashFile(filePath: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const hash = createHash('sha256');
-    const stream = fs.createReadStream(filePath);
-    stream.on('data', chunk => hash.update(chunk));
-    stream.on('end', () => resolve(hash.digest('hex')));
-    stream.on('error', reject);
-  });
-}
-
-function normalizeMtime(mtimeMs: number): string {
-  return new Date(Math.floor(mtimeMs)).toISOString();
-}
-
-function parseSnapshotMtime(value: string | undefined): number | null {
-  if (!value) {
-    return null;
-  }
-
-  const parsed = Date.parse(value);
-  return Number.isNaN(parsed) ? null : parsed;
-}
-
-function tgzMtimeDiffers(currentMtime: string, baselineMtime?: string): boolean {
-  const currentMs = parseSnapshotMtime(currentMtime);
-  const baselineMs = parseSnapshotMtime(baselineMtime);
-
-  if (currentMs === null || baselineMs === null) {
-    return currentMtime !== baselineMtime;
-  }
-
-  return Math.abs(currentMs - baselineMs) > 1;
-}
-
-async function buildCurrentEntry(filePath: string, statResult: fs.Stats): Promise<SnapshotFileEntry> {
-  const kind: SnapshotFileEntry['kind'] = path.basename(filePath) === 'package.json' ? 'package.json' : 'tgz';
-  const entry: SnapshotFileEntry = {
-    kind,
-    size: statResult.size,
-    mtime: normalizeMtime(statResult.mtimeMs),
-  };
-
-  if (kind === 'package.json') {
-    entry.sha256 = await hashFile(filePath);
-  }
-
-  return entry;
-}
-
-function entryDiffers(current: SnapshotFileEntry, baseline?: SnapshotFileEntry): boolean {
-  if (!baseline) return true;
-  if (baseline.kind !== current.kind) return true;
-  if (baseline.size !== current.size) return true;
-  if (current.kind === 'package.json') {
-    return baseline.sha256 !== current.sha256;
-  }
-  return tgzMtimeDiffers(current.mtime, baseline.mtime);
-}
-
-async function walkStorage(dirPath: string, visit: (filePath: string, statResult: fs.Stats) => Promise<boolean>): Promise<boolean> {
+async function walkStorage(dirPath: string, visit: (filePath: string) => Promise<boolean>): Promise<boolean> {
   const dirEntries = await fsp.readdir(dirPath, { withFileTypes: true });
   for (const dirEntry of dirEntries) {
     const fullPath = path.join(dirPath, dirEntry.name);
@@ -103,8 +41,7 @@ async function walkStorage(dirPath: string, visit: (filePath: string, statResult
     if (EXCLUDED_NAMES.has(dirEntry.name)) continue;
     if (dirEntry.name !== 'package.json' && !dirEntry.name.endsWith('.tgz')) continue;
 
-    const statResult = await fsp.stat(fullPath);
-    const found = await visit(fullPath, statResult);
+    const found = await visit(fullPath);
     if (found) return true;
   }
   return false;
@@ -116,15 +53,10 @@ export async function hasStorageChangesSinceSnapshot(manifestPath: string): Prom
     return true;
   }
 
-  const remainingPaths = new Set(Object.keys(manifest.files || {}));
-  const foundChange = await walkStorage(config.storageDir, async (filePath, statResult) => {
+  return walkStorage(config.storageDir, async (filePath) => {
     const relPath = path.relative(config.storageDir, filePath).replaceAll(path.sep, '/');
-    remainingPaths.delete(relPath);
-    const currentEntry = await buildCurrentEntry(filePath, statResult);
-    return entryDiffers(currentEntry, manifest.files[relPath]);
+    return !Object.prototype.hasOwnProperty.call(manifest.files || {}, relPath);
   });
-
-  return foundChange || remainingPaths.size > 0;
 }
 
 export async function promoteSnapshotManifest(snapshotManifestPath: string): Promise<void> {

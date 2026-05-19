@@ -14,7 +14,6 @@
 import fs from 'fs';
 import fsp from 'fs/promises';
 import path from 'path';
-import { execFileSync } from 'child_process';
 import { config } from './scripts';
 import { hasStorageChangesSinceSnapshot, promoteSnapshotManifest } from './snapshotManifest';
 
@@ -342,23 +341,11 @@ export async function hasDiffStorageChanges(diffId: string): Promise<boolean> {
     return hasStorageChangesSinceSnapshot(raw.snapshotManifestPath);
   }
 
-  const sinceIso = raw.createdAt.replace('Z', '').slice(0, 19);
-
-  try {
-    const result = execFileSync(
-      'find',
-      [config.storageDir, '-name', '*.tgz', '-newermt', sinceIso, '-print', '-quit'],
-      { encoding: 'utf8', timeout: 15000 }
-    );
-    return result.trim().length > 0;
-  } catch {
-    return false;
-  }
+  return false;
 }
 
 /**
- * Проверяет устаревание diff: есть ли .tgz в storage с mtime > diff.createdAt?
- * Использует `find -newermt` — выходит при первом совпадении, быстро на 46K файлов.
+ * Проверяет устаревание diff: появился ли новый файл в storage, отсутствующий в snapshot diff.
  */
 export async function checkDiffOutdated(diffId: string): Promise<boolean> {
   const raw = await readJsonOrNull<StoredDiff>(diffMetaPath(diffId));
