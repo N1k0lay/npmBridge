@@ -20,6 +20,7 @@ import {
   markDiffTransferredToNetwork,
   markDiffOutdated,
   checkDiffOutdated,
+  hasNewerTransferredDiff,
   DiffRecord,
 } from '@/lib/store';
 import { getNetwork } from '@/lib/networks';
@@ -218,21 +219,25 @@ export async function PATCH(request: Request) {
         { status: 404 }
       );
     }
+
+    const isSupersededByTransferredCheckpoint = await hasNewerTransferredDiff(diffId);
+    if (isSupersededByTransferredCheckpoint) {
+      return NextResponse.json(
+        { error: 'Есть более новый перенесённый diff. Старые diff больше нельзя отмечать как перенесённые.' },
+        { status: 409 }
+      );
+    }
     
-    if (diff.status !== 'pending' && diff.status !== 'partial') {
+    if (diff.status !== 'pending' && diff.status !== 'partial' && diff.status !== 'outdated') {
       return NextResponse.json(
         { error: `Diff имеет статус "${diff.status}", подтверждение невозможно` },
         { status: 400 }
       );
     }
 
-    const isOutdated = await checkDiffOutdated(diffId);
-    if (isOutdated) {
+    const isOutdated = diff.status === 'outdated' || await checkDiffOutdated(diffId);
+    if (diff.status !== 'outdated' && isOutdated) {
       await markDiffOutdated(diffId);
-      return NextResponse.json(
-        { error: 'Diff устарел: в storage появились новые изменения, сначала создайте новый diff' },
-        { status: 409 }
-      );
     }
     
     // Проверяем, не перенесён ли уже в эту сеть
@@ -244,7 +249,16 @@ export async function PATCH(request: Request) {
     }
     
     // Помечаем diff как перенесённый в сеть
-    await markDiffTransferredToNetwork(diffId, networkId);
+    const marked = await markDiffTransferredToNetwork(diffId, networkId, {
+      promoteSnapshot: !isOutdated,
+      preserveOutdatedStatus: isOutdated,
+    });
+    if (!marked) {
+      return NextResponse.json(
+        { error: 'Не удалось подтвердить перенос diff' },
+        { status: 409 }
+      );
+    }
     
     // Получаем обновлённый diff
     const updatedDiff = await getDiff(diffId);

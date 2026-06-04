@@ -248,6 +248,18 @@ export function DiffPanel({ onRefresh }: DiffPanelProps) {
     return (diff.transfers || []).some(t => t.networkId === networkId);
   };
 
+  const hasUnconfirmedTransfers = (diff: Diff): boolean => {
+    return networks.some(network => !isTransferredToNetwork(diff, network.id));
+  };
+
+  const hasNewerTransferredCheckpoint = (diff: Diff): boolean => {
+    return diffs.some(candidate => candidate.status === 'transferred' && candidate.createdAt > diff.createdAt);
+  };
+
+  const canConfirmTransfers = (diff: Diff): boolean => {
+    return hasUnconfirmedTransfers(diff) && !hasNewerTransferredCheckpoint(diff);
+  };
+
   const getStatusBadge = (status: Diff['status']) => {
     switch (status) {
       case 'pending':
@@ -378,7 +390,7 @@ export function DiffPanel({ onRefresh }: DiffPanelProps) {
           </div>
 
           {/* Кнопки подтверждения для каждой сети */}
-          {renderNetworkTransferButtons(pendingDiff)}
+          {canConfirmTransfers(pendingDiff) && renderNetworkTransferButtons(pendingDiff)}
         </div>
       ) : (
         <div className="mb-6">
@@ -505,6 +517,11 @@ export function DiffPanel({ onRefresh }: DiffPanelProps) {
                           </span>
                         );
                       })}
+                    </div>
+                  )}
+                  {diff.status === 'outdated' && canConfirmTransfers(diff) && diff.id !== pendingDiff?.id && (
+                    <div className="mt-3">
+                      {renderNetworkTransferButtons(diff)}
                     </div>
                   )}
                 </div>

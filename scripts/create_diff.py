@@ -118,7 +118,7 @@ def handle_termination(signum, _frame):
     raise SystemExit(143)
 
 
-def get_last_diff_time() -> str | None:
+def get_last_transferred_diff_time() -> str | None:
     archives_path = Path(DIFF_ARCHIVES_DIR)
     if not archives_path.exists():
         return None
@@ -133,6 +133,8 @@ def get_last_diff_time() -> str | None:
         try:
             with open(json_file, encoding='utf-8') as file_obj:
                 data = json.load(file_obj)
+            if data.get('status') != 'transferred':
+                continue
             created_at = data.get('createdAt')
             if created_at:
                 return created_at
@@ -212,7 +214,7 @@ def ensure_baseline_manifest(created_at: str, since_time: str | None) -> dict[st
 
 def get_diff_files(created_at: str) -> tuple[list[tuple[str, Path]], dict[str, object]]:
     storage_path = Path(STORAGE_DIR)
-    since_time = get_last_diff_time()
+    since_time = get_last_transferred_diff_time()
     baseline_manifest = ensure_baseline_manifest(created_at, since_time)
     baseline_files = baseline_manifest.get('files', {}) if baseline_manifest else {}
 
@@ -265,11 +267,11 @@ def main():
 
     archives_path.mkdir(parents=True, exist_ok=True)
 
-    since_time = get_last_diff_time()
+    since_time = get_last_transferred_diff_time()
     if since_time:
         log('INFO', f'Incremental diff since: {since_time}')
     else:
-        log('INFO', 'Full diff (no previous diffs found)')
+        log('INFO', 'Full diff (no transferred checkpoints found)')
 
     log('INFO', f'Analyzing differences against snapshot manifest: {SNAPSHOT_MANIFEST_FILE}')
     update_status('running', 'Анализ новых пакетов...')

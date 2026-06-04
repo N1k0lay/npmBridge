@@ -34,7 +34,7 @@ export interface DiffNetworkTransfer {
 export interface DiffRecord {
   id: string;
   createdAt: string;
-  /** createdAt предыдущего diff, или null если первый */
+  /** createdAt предыдущего transferred diff, или null если checkpoint ещё не было */
   sinceTime: string | null;
   status: 'pending' | 'transferred' | 'outdated' | 'partial';
   transfers: DiffNetworkTransfer[];
@@ -196,6 +196,11 @@ function diffRecordToStored(r: DiffRecord, sinceTime: string | null): StoredDiff
   };
 }
 
+function getLatestTransferredDiffTime(diffs: StoredDiff[]): string | null {
+  const latestTransferred = diffs.find(diff => diff.status === 'transferred');
+  return latestTransferred?.createdAt ?? null;
+}
+
 // ─────────────────────────────────────────────
 // DIFF
 // ─────────────────────────────────────────────
@@ -234,10 +239,9 @@ export async function getDiff(id: string): Promise<DiffRecord | null> {
 }
 
 export async function addDiff(diff: DiffRecord): Promise<void> {
-  // Вычисляем sinceTime — createdAt последнего существующего diff
+  // Вычисляем sinceTime — createdAt последнего transferred diff (checkpoint)
   const allDiffs = await readAllDiffs();
-  const sorted = allDiffs.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-  const sinceTime = sorted.length > 0 ? sorted[sorted.length - 1].createdAt : null;
+  const sinceTime = getLatestTransferredDiffTime(allDiffs);
 
   // Помечаем все pending/partial как outdated (НЕ удаляем архивы!)
   for (const d of allDiffs) {
@@ -277,15 +281,26 @@ export async function getPendingDiffForNetwork(networkId: string): Promise<DiffR
   return found ? storedToDiffRecord(found) : null;
 }
 
+export async function hasNewerTransferredDiff(diffId: string): Promise<boolean> {
+  const raw = await readJsonOrNull<StoredDiff>(diffMetaPath(diffId));
+  if (!raw?.id) return false;
+
+  const diffs = await readAllDiffs();
+  return diffs.some(diff => diff.status === 'transferred' && diff.createdAt > raw.createdAt);
+}
+
 export async function markDiffTransferredToNetwork(
   diffId: string,
-  networkId: string
+  networkId: string,
+  options?: {
+    promoteSnapshot?: boolean;
+    preserveOutdatedStatus?: boolean;
+  }
 ): Promise<boolean> {
   const { loadNetworks } = await import('./networks');
 
   const raw = await readJsonOrNull<StoredDiff>(diffMetaPath(diffId));
   if (!raw?.id) return false;
-  if (raw.status === 'outdated') return false;
   if (Object.prototype.hasOwnProperty.call(raw.transfers, networkId)) return false;
 
   raw.transfers[networkId] = new Date().toISOString();
@@ -295,11 +310,16 @@ export async function markDiffTransferredToNetwork(
     allNetworks.length > 0 &&
     allNetworks.every(n => Object.prototype.hasOwnProperty.call(raw.transfers, n.id));
 
-  if (allTransferred && raw.snapshotManifestPath) {
+  const shouldPromoteSnapshot = options?.promoteSnapshot !== false;
+  if (allTransferred && shouldPromoteSnapshot && raw.snapshotManifestPath) {
     await promoteSnapshotManifest(raw.snapshotManifestPath);
   }
 
-  raw.status = allTransferred ? 'transferred' : 'partial';
+  raw.status = allTransferred
+    ? 'transferred'
+    : options?.preserveOutdatedStatus
+      ? 'outdated'
+      : 'partial';
 
   await writeJsonAsync(diffMetaPath(diffId), raw);
   return true;
