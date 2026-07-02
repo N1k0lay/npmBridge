@@ -228,7 +228,6 @@ function PackageRow({
   meta,
   task,
   allRunning,
-  mode,
   onStart,
 }: {
   pkgId: string;
@@ -236,7 +235,6 @@ function PackageRow({
   meta: Record<string, MetaEntry>;
   task: TaskState | undefined;
   allRunning: boolean;
-  mode: string;
   onStart: (pkg: string, updateFirst: boolean) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -375,7 +373,6 @@ function PackageRow({
 export default function BinariesPanel() {
   const [data, setData]               = useState<ApiData | null>(null);
   const [loading, setLoading]         = useState(true);
-  const mode                          = 'local-extract' as const;
   const [tasks, setTasks]             = useState<Record<string, TaskState>>({});
   const [recentTasks, setRecentTasks] = useState<TaskHistoryItem[]>([]);
   const [treeOpen, setTreeOpen]       = useState(false);
@@ -587,7 +584,6 @@ export default function BinariesPanel() {
                 } : null,
               } : undefined)}
               allRunning={tasks['all']?.running ?? false}
-              mode={mode}
               onStart={startTask}
             />
           ))}

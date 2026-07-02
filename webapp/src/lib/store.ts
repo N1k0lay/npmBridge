@@ -34,7 +34,7 @@ export interface DiffNetworkTransfer {
 export interface DiffRecord {
   id: string;
   createdAt: string;
-  /** createdAt предыдущего transferred diff, или null если checkpoint ещё не было */
+  /** createdAt предыдущего checkpoint diff, или null если checkpoint ещё не было */
   sinceTime: string | null;
   status: 'pending' | 'transferred' | 'outdated' | 'partial';
   transfers: DiffNetworkTransfer[];
@@ -48,7 +48,7 @@ export interface DiffRecord {
 
 export interface UpdateRecord {
   id: string;
-  type: 'full' | 'recent' | 'single';
+  type: 'full' | 'smart_plan' | 'smart_apply_plan' | 'legacy_full' | 'recent' | 'single';
   startedAt: string;
   finishedAt: string | null;
   status: 'running' | 'completed' | 'failed' | 'completed_with_errors';
@@ -196,9 +196,17 @@ function diffRecordToStored(r: DiffRecord, sinceTime: string | null): StoredDiff
   };
 }
 
-function getLatestTransferredDiffTime(diffs: StoredDiff[]): string | null {
-  const latestTransferred = diffs.find(diff => diff.status === 'transferred');
-  return latestTransferred?.createdAt ?? null;
+function hasTransfers(diff: StoredDiff): boolean {
+  return Object.keys(diff.transfers || {}).length > 0;
+}
+
+function isCheckpointDiff(diff: StoredDiff): boolean {
+  return diff.status === 'transferred' || hasTransfers(diff);
+}
+
+function getLatestCheckpointDiffTime(diffs: StoredDiff[]): string | null {
+  const latestCheckpoint = diffs.find(isCheckpointDiff);
+  return latestCheckpoint?.createdAt ?? null;
 }
 
 // ─────────────────────────────────────────────
@@ -239,24 +247,22 @@ export async function getDiff(id: string): Promise<DiffRecord | null> {
 }
 
 export async function addDiff(diff: DiffRecord): Promise<void> {
-  // Вычисляем sinceTime — createdAt последнего transferred diff (checkpoint)
+  // Вычисляем sinceTime — createdAt последнего checkpoint diff
   const allDiffs = await readAllDiffs();
-  const sinceTime = getLatestTransferredDiffTime(allDiffs);
+  const sinceTime = getLatestCheckpointDiffTime(allDiffs);
 
-  // Помечаем все pending/partial как outdated (НЕ удаляем архивы!)
+  // Помечаем все pending/partial как outdated (для неперенесенных — удаляем архивы и запись!)
   for (const d of allDiffs) {
     if (d.status === 'pending' || d.status === 'partial') {
-      await writeJsonAsync(diffMetaPath(d.id), { ...d, status: 'outdated' });
-    }
-  }
-
-  // Удаляем архивы полностью перенесённых diff
-  for (const d of allDiffs) {
-    if (d.status === 'transferred') {
-      deleteFileSilent(d.archivePath);
-      deleteFileSilent(d.archivePath.replace('.tar.gz', '_files.json'));
-      if (d.snapshotManifestPath) {
-        deleteFileSilent(d.snapshotManifestPath);
+      if (!hasTransfers(d)) {
+        deleteFileSilent(d.archivePath);
+        deleteFileSilent(d.archivePath.replace('.tar.gz', '_files.json'));
+        if (d.snapshotManifestPath) {
+          deleteFileSilent(d.snapshotManifestPath);
+        }
+        deleteFileSilent(diffMetaPath(d.id));
+      } else {
+        await writeJsonAsync(diffMetaPath(d.id), { ...d, status: 'outdated' });
       }
     }
   }
@@ -303,6 +309,7 @@ export async function markDiffTransferredToNetwork(
   if (!raw?.id) return false;
   if (Object.prototype.hasOwnProperty.call(raw.transfers, networkId)) return false;
 
+  const hadTransfersBefore = hasTransfers(raw);
   raw.transfers[networkId] = new Date().toISOString();
 
   const allNetworks = await loadNetworks();
@@ -311,7 +318,7 @@ export async function markDiffTransferredToNetwork(
     allNetworks.every(n => Object.prototype.hasOwnProperty.call(raw.transfers, n.id));
 
   const shouldPromoteSnapshot = options?.promoteSnapshot !== false;
-  if (allTransferred && shouldPromoteSnapshot && raw.snapshotManifestPath) {
+  if (!hadTransfersBefore && shouldPromoteSnapshot && raw.snapshotManifestPath) {
     await promoteSnapshotManifest(raw.snapshotManifestPath);
   }
 
@@ -340,6 +347,18 @@ export async function markDiffTransferred(id: string): Promise<boolean> {
 export async function markDiffOutdated(id: string): Promise<boolean> {
   const raw = await readJsonOrNull<StoredDiff>(diffMetaPath(id));
   if (!raw?.id) return false;
+
+  const hasTransfers = Object.keys(raw.transfers || {}).length > 0;
+  if (!hasTransfers) {
+    deleteFileSilent(raw.archivePath);
+    deleteFileSilent(raw.archivePath.replace('.tar.gz', '_files.json'));
+    if (raw.snapshotManifestPath) {
+      deleteFileSilent(raw.snapshotManifestPath);
+    }
+    deleteFileSilent(diffMetaPath(id));
+    return true;
+  }
+
   raw.status = 'outdated';
   await writeJsonAsync(diffMetaPath(id), raw);
   return true;

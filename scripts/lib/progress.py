@@ -16,7 +16,7 @@ class ProgressTracker:
     при параллельной обработке пакетов.
     """
     
-    def __init__(self, total: int, update_interval: int = 10):
+    def __init__(self, total: int, update_interval: int = 10, phase: str | None = None):
         """
         Инициализация трекера.
         
@@ -31,6 +31,7 @@ class ProgressTracker:
         self.failed = 0
         self.errors: list[dict] = []
         self.update_interval = update_interval
+        self.phase = phase
         self._lock = Lock()
     
     def increment(self, package: str, success: bool, error_msg: str = "") -> None:
@@ -67,7 +68,8 @@ class ProgressTracker:
             package=self.current_package,
             success=self.success,
             failed=self.failed,
-            errors=self.errors
+            errors=self.errors,
+            phase=self.phase,
         )
     
     def force_update(self) -> None:

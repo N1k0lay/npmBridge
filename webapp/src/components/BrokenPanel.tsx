@@ -48,6 +48,7 @@ export function BrokenPanel({ onRefresh }: BrokenPanelProps) {
     taskId,
     endpoint: '/api/broken',
     onComplete: async () => {
+      setTaskId(null);
       await loadBrokenData();
       onRefresh?.();
     },

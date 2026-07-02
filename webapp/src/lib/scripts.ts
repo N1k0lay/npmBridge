@@ -18,6 +18,8 @@ export interface AppConfig {
 }
 
 const dataDir = process.env.DATA_DIR || '/home/npm/verdaccio/data';
+const ANSI_SEQUENCE_RE = /\u001b\[[0-?]*[ -/]*[@-~]/g;
+const ANSIX_LOG_SPINNER_RE = /[\u2800-\u28FF]+/g;
 
 // Конфигурация из переменных окружения
 export const config: AppConfig = {
@@ -73,6 +75,21 @@ export interface TaskHistoryEntry {
   hasLog: boolean;
 }
 
+function sanitizeLogLine(line: string): string {
+  return line
+    .replace(ANSI_SEQUENCE_RE, '')
+    .replace(ANSIX_LOG_SPINNER_RE, '')
+    .replace(/\r/g, '')
+    .trimEnd();
+}
+
+function sanitizeLogContent(content: string): string {
+  return content
+    .split('\n')
+    .map(sanitizeLogLine)
+    .join('\n');
+}
+
 /**
  * Запуск Python скрипта с переменными окружения
  * Python скрипты по-прежнему пишут в JSON файлы для прогресса/статуса,
@@ -108,6 +125,7 @@ export async function runScript(
     PROGRESS_FILE: progressFile,
     STATUS_FILE: statusFile,
     LOG_FILE: logFile,
+    TASK_ID: taskId,
     ...extraEnv,
   };
   
@@ -232,7 +250,7 @@ export async function writeTaskStatus(
 export async function getTaskLogs(taskId: string, tail?: number): Promise<string> {
   const logFile = path.join(config.logsDir, `${taskId}.log`);
   try {
-    const content = await fs.readFile(logFile, 'utf-8');
+    const content = sanitizeLogContent(await fs.readFile(logFile, 'utf-8'));
     if (tail) {
       const lines = content.split('\n');
       return lines.slice(-tail).join('\n');

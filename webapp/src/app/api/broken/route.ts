@@ -26,12 +26,20 @@ export async function GET(request: Request) {
       getTaskStatus(taskId),
       getTaskLogs(taskId, 200),
     ]);
+    const running = isTaskRunning(taskId);
+    const normalizedStatus = !running && status?.status === 'running'
+      ? {
+          ...status,
+          status: 'failed',
+          message: 'Задача прервана: процесс не найден',
+        }
+      : status;
     
     return NextResponse.json({
       taskId,
-      running: isTaskRunning(taskId),
+      running,
       progress,
-      status,
+      status: normalizedStatus,
       logs,
     });
   }
@@ -42,11 +50,20 @@ export async function GET(request: Request) {
     getRunningBrokenCheck(),
     listTaskHistory('broken_', 20),
   ]);
+
+  let resolvedRunningCheck = runningCheck;
+  if (runningCheck && !isTaskRunning(runningCheck.id)) {
+    await updateBrokenCheck(runningCheck.id, {
+      status: 'failed',
+      finishedAt: new Date().toISOString(),
+    });
+    resolvedRunningCheck = null;
+  }
   
   return NextResponse.json({
     checks: checks.slice(0, 20),
     lastCheck,
-    runningCheck,
+    runningCheck: resolvedRunningCheck,
     recentTasks,
   });
 }

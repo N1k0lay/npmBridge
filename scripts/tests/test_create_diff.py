@@ -31,6 +31,95 @@ def tgz_entry(payload: bytes) -> dict[str, str | int]:
 
 
 class CreateDiffTests(unittest.TestCase):
+    def test_uses_outdated_diff_with_transfers_as_checkpoint(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            storage_dir = tmp_path / 'storage'
+            frozen_dir = tmp_path / 'frozen'
+            diff_archives_dir = tmp_path / 'diff_archives'
+            data_dir = tmp_path / 'data'
+            logs_dir = tmp_path / 'logs'
+
+            storage_dir.mkdir()
+            frozen_dir.mkdir()
+            diff_archives_dir.mkdir()
+            data_dir.mkdir()
+            logs_dir.mkdir()
+
+            package_dir = storage_dir / 'types-registry'
+            package_dir.mkdir()
+
+            package_json_text = '{"name":"types-registry","version":"0.1.747"}'
+            tgz_payload = b'test-package'
+
+            package_json = package_dir / 'package.json'
+            package_json.write_text(package_json_text, encoding='utf-8')
+            tgz_file = package_dir / 'types-registry-0.1.747.tgz'
+            tgz_file.write_bytes(tgz_payload)
+            old_timestamp = 1764316800
+            os.utime(package_json, (old_timestamp, old_timestamp))
+            os.utime(tgz_file, (old_timestamp, old_timestamp))
+
+            snapshot_manifest_path = data_dir / 'snapshot-manifest.json'
+            snapshot_manifest_path.write_text(
+                json.dumps(
+                    {
+                        'version': 1,
+                        'snapshotId': 'baseline_1',
+                        'createdAt': '2026-06-25T09:00:49.974405+00:00',
+                        'syncedAt': '2026-06-25T09:30:43.475Z',
+                        'sourceDiffId': 'diff_2026-06-25T09-00-49-889Z',
+                        'files': {
+                            'types-registry/package.json': package_entry(package_json_text),
+                            'types-registry/types-registry-0.1.747.tgz': tgz_entry(tgz_payload),
+                        },
+                    }
+                ),
+                encoding='utf-8',
+            )
+
+            (diff_archives_dir / 'diff_2026-06-25T09-00-49-889Z.json').write_text(
+                json.dumps(
+                    {
+                        'id': 'diff_2026-06-25T09-00-49-889Z',
+                        'createdAt': '2026-06-25T09:13:38.910Z',
+                        'sinceTime': None,
+                        'status': 'outdated',
+                        'archivePath': '/app/diff_archives/diff_2026-06-25T09-00-49-889Z.tar.gz',
+                        'archiveSize': 123,
+                        'archiveSizeHuman': '123 B',
+                        'filesCount': 2,
+                        'storageSnapshotTime': '2026-06-25T09:00:49.974405+00:00',
+                        'transfers': {'default': '2026-06-25T09:30:43.475Z'},
+                    }
+                ),
+                encoding='utf-8',
+            )
+
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT_PATH)],
+                capture_output=True,
+                text=True,
+                check=False,
+                env={
+                    **os.environ,
+                    'STORAGE_DIR': str(storage_dir),
+                    'FROZEN_DIR': str(frozen_dir),
+                    'DATA_DIR': str(data_dir),
+                    'DIFF_ARCHIVES_DIR': str(diff_archives_dir),
+                    'SNAPSHOT_MANIFEST_FILE': str(snapshot_manifest_path),
+                    'DIFF_ID': 'diff_test',
+                    'PROGRESS_FILE': str(logs_dir / 'progress.json'),
+                    'STATUS_FILE': str(logs_dir / 'status.json'),
+                    'LOG_FILE': str(logs_dir / 'diff.log'),
+                },
+            )
+
+            self.assertEqual(result.returncode, 0, msg=result.stderr)
+            payload = json.loads(result.stdout.strip().splitlines()[-1])
+            self.assertEqual(payload['filesCount'], 0)
+            self.assertEqual(payload['sinceTime'], '2026-06-25T09:13:38.910Z')
+
     def test_bootstraps_snapshot_manifest_from_transferred_full_diff_archive(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)

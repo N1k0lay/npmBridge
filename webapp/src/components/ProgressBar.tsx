@@ -29,6 +29,18 @@ export function ProgressBar({ progress, status, isRunning }: ProgressBarProps) {
     return null;
   }
 
+  const phaseLabels: Record<string, string> = {
+    planning: 'Планирование',
+    Планирование: 'Планирование',
+    installing: 'Установка',
+    Установка: 'Установка',
+    processing: 'Обработка',
+  };
+
+  const phaseLabel = progress?.phase
+    ? phaseLabels[progress.phase] ?? progress.phase
+    : 'Обработка';
+
   const formatBytes = (value: number) => {
     let size = value;
     const units = ['B', 'KB', 'MB', 'GB', 'TB'];
@@ -78,15 +90,15 @@ export function ProgressBar({ progress, status, isRunning }: ProgressBarProps) {
 
   return (
     <div className="bg-white rounded-lg shadow p-4 space-y-3">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 items-center gap-2">
           {getStatusIcon()}
-          <span className="font-medium">
+          <span className="min-w-0 break-words font-medium">
             {status?.message || 'Загрузка...'}
           </span>
         </div>
         {progress && (
-          <span className="text-sm text-gray-500">
+          <span className="shrink-0 text-sm text-gray-500">
             {progress.current} / {progress.total}
           </span>
         )}
@@ -101,10 +113,10 @@ export function ProgressBar({ progress, status, isRunning }: ProgressBarProps) {
             />
           </div>
           
-          <div className="flex justify-between text-sm text-gray-500">
-            <span>{progress.percent.toFixed(1)}%</span>
+          <div className="flex flex-col gap-1 text-sm text-gray-500 sm:flex-row sm:items-center sm:justify-between">
+            <span className="shrink-0">{progress.percent.toFixed(1)}%</span>
             {(progress.currentPackage || progress.currentFile) && (
-              <span className="truncate max-w-xs">
+              <span className="min-w-0 truncate sm:max-w-md" title={progress.currentPackage || progress.currentFile}>
                 {progress.currentPackage || progress.currentFile}
               </span>
             )}
@@ -112,7 +124,7 @@ export function ProgressBar({ progress, status, isRunning }: ProgressBarProps) {
 
           {(progress.phase || (progress.processedBytes !== undefined && progress.totalBytes !== undefined)) && (
             <div className="flex flex-wrap justify-between gap-2 text-xs text-gray-500">
-              <span>{progress.phase || 'processing'}</span>
+              <span>{phaseLabel}</span>
               {progress.processedBytes !== undefined && progress.totalBytes !== undefined && progress.totalBytes > 0 && (
                 <span>
                   {formatBytes(progress.processedBytes)} / {formatBytes(progress.totalBytes)}

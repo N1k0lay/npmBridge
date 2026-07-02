@@ -2,6 +2,7 @@ import fs from 'fs/promises';
 import { existsSync } from 'fs';
 import path from 'path';
 import { config } from './scripts';
+import { extractTarballVersion } from './packageVersion.mjs';
 
 // Кэш статистики в памяти
 let _statsCache: StorageStats | null = null;
@@ -163,8 +164,7 @@ export async function getPackageInfo(packageName: string): Promise<PackageInfo |
       const filePath = path.join(packagePath, entry.name);
       const stats = await fs.stat(filePath);
       
-      const versionMatch = entry.name.match(/(\d+\.\d+\.\d+(?:-[\w.]+)?)/);
-      const version = versionMatch ? versionMatch[1] : 'unknown';
+      const version = extractTarballVersion(entry.name, packageName);
       
       downloadedSet.add(version);
       downloadedVersions.push({
@@ -583,8 +583,7 @@ async function scanPackageForHistory(
       const filePath = path.join(packagePath, entry.name);
       const stats = await fs.stat(filePath);
       
-      const versionMatch = entry.name.match(/(\d+\.\d+\.\d+(?:-[\w.]+)?)/);
-      const version = versionMatch ? versionMatch[1] : 'unknown';
+      const version = extractTarballVersion(entry.name, packageName);
       
       versions.push({
         version,
@@ -723,8 +722,7 @@ async function scanPackageForRecent(
       
       if (mtime >= cutoffTime) {
         // Извлекаем версию из имени файла
-        const versionMatch = file.match(/(\d+\.\d+\.\d+(?:-[\w.]+)?)/);
-        const version = versionMatch ? versionMatch[1] : 'unknown';
+        const version = extractTarballVersion(file, packageName);
         
         results.push({
           name: packageName,
@@ -805,8 +803,7 @@ export async function getPackagePageData(packageName: string): Promise<PackagePa
         const filePath = path.join(packagePath, entry.name);
         const stats = await fs.stat(filePath);
         
-        const versionMatch = entry.name.match(/(\d+\.\d+\.\d+(?:-[\w.]+)?)/);
-        const version = versionMatch ? versionMatch[1] : 'unknown';
+        const version = extractTarballVersion(entry.name, packageName);
         
         downloadedVersions.set(version, {
           filename: entry.name,

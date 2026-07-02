@@ -5,7 +5,7 @@ import { History, RefreshCw, Check, XCircle, AlertTriangle, Clock, FileText } fr
 
 interface UpdateRecord {
   id: string;
-  type: 'full' | 'recent' | 'single';
+  type: 'full' | 'smart_plan' | 'smart_apply_plan' | 'legacy_full' | 'recent' | 'single';
   startedAt: string;
   finishedAt: string | null;
   status: string;
@@ -159,6 +159,12 @@ export function HistoryPanel({ refreshTrigger }: HistoryPanelProps) {
   const getUpdateTitle = (update: UpdateRecord) => {
     switch (update.type) {
       case 'full':
+        return 'Умное обновление';
+      case 'smart_plan':
+        return 'План обновления';
+      case 'smart_apply_plan':
+        return 'Обновление по плану';
+      case 'legacy_full':
         return 'Полное обновление';
       case 'recent':
         return 'Обновление недавних';

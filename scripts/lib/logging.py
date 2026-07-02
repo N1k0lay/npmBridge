@@ -59,7 +59,8 @@ def update_progress(
     package: str,
     success: int,
     failed: int,
-    errors: list
+    errors: list,
+    phase: str | None = None,
 ) -> None:
     """
     Обновляет файл прогресса выполнения.
@@ -83,6 +84,8 @@ def update_progress(
         "errors": errors[-20:],  # Последние 20 ошибок
         "updatedAt": datetime.now().isoformat()
     }
+    if phase:
+        data["phase"] = phase
     try:
         with open(PROGRESS_FILE, 'w') as f:
             json.dump(data, f)

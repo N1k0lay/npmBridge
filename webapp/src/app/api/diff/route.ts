@@ -78,27 +78,38 @@ export async function GET(request: Request) {
     listTaskHistory('diff_task_', 20),
   ]);
 
-  if (!pendingDiff) {
+  let activeDiff = pendingDiff;
+  if (activeDiff) {
+    const isOutdated = await checkDiffOutdated(activeDiff.id);
+    if (isOutdated) {
+      await markDiffOutdated(activeDiff.id);
+      activeDiff.status = 'outdated';
+    }
+  } else {
     const latestDiff = diffs[0];
     if (latestDiff?.status === 'outdated') {
       const hasChanges = await hasDiffStorageChanges(latestDiff.id);
       if (!hasChanges) {
         await markDiffPending(latestDiff.id);
         latestDiff.status = latestDiff.transfers.length > 0 ? 'partial' : 'pending';
+        activeDiff = latestDiff;
       }
     }
   }
   
   return NextResponse.json({
     diffs: diffs.slice(0, 50),
-    pendingDiff: (pendingDiff?.status === 'pending' || pendingDiff?.status === 'partial') ? pendingDiff : null,
+    pendingDiff: (activeDiff?.status === 'pending' || activeDiff?.status === 'partial' || activeDiff?.status === 'outdated') ? activeDiff : null,
     runningTaskId,
     recentTasks,
   });
 }
 
 // POST - создать новый diff
-export async function POST(_request: Request) {
+export async function POST(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const force = searchParams.get('force') === 'true';
+
   const runningTaskId = findRunningTaskId('diff_task_');
   if (runningTaskId) {
     return NextResponse.json(
@@ -116,7 +127,7 @@ export async function POST(_request: Request) {
   // Проверяем, нет ли уже pending diff
   const existingPending = await getPendingDiff();
   if (existingPending) {
-    const isOutdated = await checkDiffOutdated(existingPending.id);
+    const isOutdated = force || await checkDiffOutdated(existingPending.id);
     if (!isOutdated) {
       return NextResponse.json(
         { 
@@ -220,22 +231,25 @@ export async function PATCH(request: Request) {
       );
     }
 
+    const isHistoricalTransferred = diff.status === 'transferred';
     const isSupersededByTransferredCheckpoint = await hasNewerTransferredDiff(diffId);
-    if (isSupersededByTransferredCheckpoint) {
+    if (isSupersededByTransferredCheckpoint && !isHistoricalTransferred) {
       return NextResponse.json(
         { error: 'Есть более новый перенесённый diff. Старые diff больше нельзя отмечать как перенесённые.' },
         { status: 409 }
       );
     }
     
-    if (diff.status !== 'pending' && diff.status !== 'partial' && diff.status !== 'outdated') {
+    if (diff.status !== 'pending' && diff.status !== 'partial' && diff.status !== 'outdated' && diff.status !== 'transferred') {
       return NextResponse.json(
         { error: `Diff имеет статус "${diff.status}", подтверждение невозможно` },
         { status: 400 }
       );
     }
 
-    const isOutdated = diff.status === 'outdated' || await checkDiffOutdated(diffId);
+    const isOutdated =
+      diff.status === 'outdated' ||
+      (diff.status !== 'transferred' && await checkDiffOutdated(diffId));
     if (diff.status !== 'outdated' && isOutdated) {
       await markDiffOutdated(diffId);
     }
@@ -250,7 +264,9 @@ export async function PATCH(request: Request) {
     
     // Помечаем diff как перенесённый в сеть
     const marked = await markDiffTransferredToNetwork(diffId, networkId, {
-      promoteSnapshot: !isOutdated,
+      // Snapshot продвигается на первом подтверждённом переносе diff.
+      // Исторический полностью transferred diff нельзя повторно продвигать в baseline.
+      promoteSnapshot: diff.status !== 'transferred',
       preserveOutdatedStatus: isOutdated,
     });
     if (!marked) {
